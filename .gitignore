@@ -1,0 +1,4 @@
+node_modules
+.partykit
+dist
+*.env

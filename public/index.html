@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, shrink-to-fit=no"
+    />
+    <title>Mind Meld</title>
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <meta name="title" content="Mind Meld" />
+    <meta
+      name="description"
+      content="Say a word. Find the bridge. Meld your minds."
+    />
+    <meta name="theme-color" content="#faf8f4" />
+
+    <link rel="stylesheet" href="/normalize.css" />
+    <link rel="stylesheet" href="/dist/client.css" />
+  </head>
+  <body>
+    <main id="app">
+      <!-- HOME -->
+      <section data-screen="home" class="screen">
+        <h1 class="wordmark">Mind Meld</h1>
+        <p class="tagline">Choose a word. Find the bridge. Meld your minds.</p>
+
+        <input
+          id="display-name"
+          class="code-input"
+          type="text"
+          maxlength="24"
+          placeholder="Your name (optional)"
+          autocomplete="off"
+        />
+
+        <button id="create-room" class="btn btn-primary" type="button">
+          Create a room
+        </button>
+
+        <div class="divider"><span>or</span></div>
+
+        <form id="join-form" class="join-form">
+          <input
+            id="join-code"
+            class="code-input"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            maxlength="6"
+            placeholder="6-digit code"
+            autocomplete="off"
+          />
+          <button class="btn" type="submit">Join room</button>
+        </form>
+        <p id="home-error" class="error-text" hidden></p>
+
+        <details class="rules">
+          <summary>How to play</summary>
+          <ol>
+            <li>Type a word &mdash; it stays hidden until everyone submits.</li>
+            <li>All words reveal at once. Not a match? Find a word that bridges everyone's words, then go again.</li>
+            <li>Repeat until every player says the exact same word at the same time.</li>
+          </ol>
+        </details>
+      </section>
+
+      <!-- LOBBY -->
+      <section data-screen="lobby" class="screen">
+        <p class="eyebrow">Room code</p>
+        <button id="copy-code" class="room-code" type="button" title="Copy code"></button>
+        <p id="copy-hint" class="hint" hidden>Copied!</p>
+
+        <ul id="player-list" class="player-list"></ul>
+        <p id="lobby-status" class="hint"></p>
+
+        <button id="start-game" class="btn btn-primary" type="button" disabled>
+          Start game
+        </button>
+      </section>
+
+      <!-- COLLECTING -->
+      <section data-screen="collecting" class="screen">
+        <p class="eyebrow" id="round-label">Round 1</p>
+        <h2>Type a word that brings us closer to melded minds!</h2>
+
+        <div id="history-wrap" class="history-wrap" hidden>
+          <table class="history-table">
+            <thead>
+              <tr id="history-head"></tr>
+            </thead>
+            <tbody id="history-body"></tbody>
+          </table>
+        </div>
+
+        <form id="word-form" class="word-form">
+          <input
+            id="word-input"
+            class="word-input"
+            type="text"
+            maxlength="40"
+            placeholder="your word"
+            autocomplete="off"
+          />
+          <button class="btn btn-primary" type="submit">Submit</button>
+        </form>
+        <p id="word-error" class="error-text" hidden></p>
+
+        <p id="submission-progress" class="hint" hidden></p>
+      </section>
+
+      <!-- REVEALED (no match yet) -->
+      <section data-screen="revealed" class="screen">
+        <p class="eyebrow" id="revealed-round-label">Round 1</p>
+        <h2>Not a match &mdash; yet</h2>
+        <ul id="reveal-grid" class="reveal-grid"></ul>
+        <button id="next-round" class="btn btn-primary" type="button">
+          Next round
+        </button>
+      </section>
+
+      <!-- MATCHED -->
+      <section data-screen="matched" class="screen">
+        <p class="eyebrow">Mind melded</p>
+        <h2 id="matched-word" class="matched-word"></h2>
+        <ol id="path-list" class="path-list"></ol>
+        <button id="play-again" class="btn btn-primary" type="button">
+          Play again
+        </button>
+      </section>
+
+      <!-- ERROR -->
+      <section data-screen="error" class="screen">
+        <h2>Something went wrong</h2>
+        <p id="error-message" class="error-text"></p>
+        <button id="error-back" class="btn" type="button">Back to home</button>
+      </section>
+    </main>
+
+    <p id="toast" class="toast" hidden></p>
+
+    <script type="module" src="/dist/client.js"></script>
+  </body>
+</html>
