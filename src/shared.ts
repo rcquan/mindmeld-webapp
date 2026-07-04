@@ -7,6 +7,16 @@ export interface Player {
   id: string;
   label: string;
   joinedAt: number;
+  connected: boolean;
+  disconnectedAt?: number;
+}
+
+export interface RoomInfo {
+  exists: boolean;
+  created: boolean;
+  status: RoomStatus;
+  playerCount: number;
+  full: boolean;
 }
 
 export interface RoundWord {
@@ -37,6 +47,11 @@ export type ServerMessage =
       roomCode: string;
       status: RoomStatus;
       players: Player[];
+      round: number;
+      path: RoundResult[];
+      submissionProgress?: { submittedCount: number; totalCount: number };
+      revealResults?: RoundWord[];
+      youSubmitted: boolean;
     }
   | { type: "players-update"; players: Player[] }
   | { type: "error"; code: ErrorCode; message: string }

@@ -4,13 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "partykit dev --live",
-    "deploy": "partykit deploy"
+    "deploy": "partykit deploy",
+    "lint": "biome check .",
+    "format": "biome check --write ."
   },
   "dependencies": {
     "cloudflare": "^6.5.0",
     "partysocket": "^1.0.2"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.2",
     "partykit": "^0.0.110",
     "typescript": "^5.5.4"
   }
