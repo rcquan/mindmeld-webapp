@@ -3,11 +3,25 @@ import "./styles.css";
 import PartySocket from "partysocket";
 import type {
   Player,
+  RoomInfo,
   RoomStatus,
   RoundResult,
   RoundWord,
   ServerMessage,
 } from "./shared";
+
+// How long the client keeps retrying a dropped connection in the background
+// before giving up and showing the fatal "lost connection" screen.
+const RECONNECT_ERROR_THRESHOLD_MS = 120_000;
+
+function getClientId(): string {
+  let id = localStorage.getItem("mindmeld-client-id");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("mindmeld-client-id", id);
+  }
+  return id;
+}
 
 // The frontend and the room server are served from the same PartyKit
 // project, so the page's own origin is always the right host to talk to —
@@ -114,6 +128,8 @@ function render() {
       const li = document.createElement("li");
       li.textContent =
         player.id === state.you?.id ? `${player.label} (you)` : player.label;
+      if (!player.connected) li.textContent += " (reconnecting…)";
+      li.classList.toggle("player-disconnected", !player.connected);
       playerList.appendChild(li);
     }
     lobbyStatus.textContent =
@@ -131,7 +147,8 @@ function render() {
     if (state.submitted && state.submissionProgress) {
       submissionProgressEl.hidden = false;
       submissionProgressEl.textContent = `Waiting on ${
-        state.submissionProgress.totalCount - state.submissionProgress.submittedCount
+        state.submissionProgress.totalCount -
+        state.submissionProgress.submittedCount
       } more player(s)… (${state.submissionProgress.submittedCount}/${
         state.submissionProgress.totalCount
       } submitted)`;
@@ -148,6 +165,7 @@ function render() {
         const th = document.createElement("th");
         th.textContent =
           player.id === state.you?.id ? `${player.label} (you)` : player.label;
+        th.classList.toggle("player-disconnected", !player.connected);
         historyHead.appendChild(th);
       }
       historyBody.innerHTML = "";
@@ -200,6 +218,7 @@ function render() {
 function resetToHome(message?: string) {
   socket?.close();
   socket = undefined;
+  clearDisconnectTimer();
   state.screen = "home";
   state.roomCode = "";
   state.you = undefined;
@@ -236,6 +255,12 @@ function handleMessage(raw: string) {
       state.you = message.you;
       state.roomCode = message.roomCode;
       state.players = message.players;
+      state.round = message.round;
+      state.path = message.path;
+      state.submissionProgress = message.submissionProgress;
+      state.revealResults = message.revealResults ?? [];
+      state.submitted = message.youSubmitted;
+      state.wordError = "";
       state.screen = statusToScreen(message.status);
       break;
     }
@@ -244,6 +269,11 @@ function handleMessage(raw: string) {
       break;
     }
     case "error": {
+      // The server is about to close this connection for a reason that
+      // won't resolve itself (room full/started/gone) — close cleanly on
+      // our end too so the client doesn't keep silently retrying forever.
+      clearDisconnectTimer();
+      socket?.close();
       showError(message.message);
       return;
     }
@@ -307,53 +337,79 @@ function statusToScreen(status: RoomStatus): Screen {
   }
 }
 
+let disconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
+function clearDisconnectTimer() {
+  clearTimeout(disconnectTimer);
+  disconnectTimer = undefined;
+}
+
 function connect(roomCode: string) {
   const label = displayNameInput.value.trim().slice(0, 24);
   localStorage.setItem("mindmeld-name", label);
   socket = new PartySocket({
     host: PARTYKIT_HOST,
     room: roomCode,
-    maxRetries: 0,
+    id: getClientId(),
     query: { label },
   });
   socket.addEventListener("message", (event) => handleMessage(event.data));
+  socket.addEventListener("open", clearDisconnectTimer);
   socket.addEventListener("close", (event) => {
-    if (state.screen !== "error" && event.code !== 1000) {
-      showError("Lost connection to the room.");
+    if (state.screen === "error" || event.code === 1000) return;
+    showToast("Reconnecting…");
+    if (!disconnectTimer) {
+      disconnectTimer = setTimeout(() => {
+        showError("Lost connection to the room.");
+      }, RECONNECT_ERROR_THRESHOLD_MS);
     }
   });
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || !socket) return;
+  if (socket.readyState !== socket.OPEN) socket.reconnect();
+});
 
 function randomCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-async function peek(roomCode: string) {
+async function peek(roomCode: string): Promise<RoomInfo> {
   const res = await PartySocket.fetch({
     host: PARTYKIT_HOST,
     room: roomCode,
   });
-  return (await res.json()) as {
-    exists: boolean;
-    status: RoomStatus;
-    playerCount: number;
-    full: boolean;
-  };
+  return (await res.json()) as RoomInfo;
+}
+
+async function createRoom(roomCode: string): Promise<RoomInfo> {
+  const res = await PartySocket.fetch(
+    { host: PARTYKIT_HOST, room: roomCode },
+    { method: "POST" },
+  );
+  return (await res.json()) as RoomInfo;
 }
 
 createRoomBtn.addEventListener("click", async () => {
   createRoomBtn.disabled = true;
   try {
     let code = randomCode();
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const info = await peek(code);
-      if (!info.exists) break;
+    let info = await createRoom(code);
+    for (let attempt = 0; attempt < 5 && !info.created; attempt++) {
       code = randomCode();
+      info = await createRoom(code);
+    }
+    if (!info.created) {
+      homeError.hidden = false;
+      homeError.textContent = "Couldn't find a free room code — try again.";
+      return;
     }
     connect(code);
   } catch {
     homeError.hidden = false;
-    homeError.textContent = "Couldn't reach the server — check your connection and try again.";
+    homeError.textContent =
+      "Couldn't reach the server — check your connection and try again.";
   } finally {
     createRoomBtn.disabled = false;
   }
@@ -388,7 +444,8 @@ joinForm.addEventListener("submit", async (event) => {
     connect(code);
   } catch {
     homeError.hidden = false;
-    homeError.textContent = "Couldn't reach the server — check your connection and try again.";
+    homeError.textContent =
+      "Couldn't reach the server — check your connection and try again.";
   }
 });
 
