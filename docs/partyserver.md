@@ -43,6 +43,6 @@ When the last player disconnects, `onClose` sets an alarm for `GRACE_PERIOD_MS` 
 - **Don't use the storage key `__ps_name`.** PartyServer reserves it.
 - **A Durable Object only interleaves at `await`s.** `onRequest` relies on this: it sets `createdAt` before its first `await`, so a racing `POST` for the same code loses cleanly. Keep check-then-set logic free of `await`s.
 
-## Local dev behavior
+## Close timing
 
-After a server-initiated close, the client receives the close frame and code at once, but the browser's `close` event can lag. It took about 2s in Chromium and about 10s in Node's WebSocket client under `wrangler dev`. When testing, check `readyState` rather than waiting for the event.
+After a server-initiated close, the client receives the close frame and code at once, but the browser's `close` event can lag. It took about 2s in Chromium under `wrangler dev`, and about 10s in Node's WebSocket client both under `wrangler dev` and in production. When testing, check `readyState` rather than waiting for the event.

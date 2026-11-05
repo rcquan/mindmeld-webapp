@@ -11,6 +11,8 @@ How this app is configured, run and deployed. Reference: [Wrangler configuration
 | `compatibility_date`, `compatibility_flags` | Runtime version. `nodejs_compat` follows the PartyServer migration guide. |
 | `durable_objects.bindings` | Binds `MindMeld` as `Main`, which produces the `/parties/main/:room` route. |
 | `migrations` | Durable Object class history. See below. |
+| `routes` | Attaches mindmeld-game.com as a Custom Domain. |
+| `workers_dev`, `preview_urls` | Both off, so the app is only reachable on mindmeld-game.com. |
 | `assets` | Serves `public/`. |
 | `build` | Runs `npm run build:client` before `dev` and `deploy`, and watches `src`. |
 | `observability` | Keeps Worker logs in the Cloudflare dashboard. |
@@ -56,6 +58,10 @@ The app has none today. If one is needed, use `npx wrangler secret put NAME`, no
 
 ## Domain and rollback
 
-mindmeld-game.com is a [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), and `www` isn't configured. The zone is in the same account as the Worker.
+mindmeld-game.com is a [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/) on `mindmeld-game`, set by `routes` in `wrangler.jsonc`. `www` isn't configured, and the zone is in the same account as the Worker.
 
-TODO after cutover: record the final `routes` config and confirm the rollback steps.
+Wrangler moves a Custom Domain between Workers without asking: the cutover from `rcquan-mindmeld` happened on a plain `npm run deploy`, with no prompt.
+
+To roll back to the PartyKit Worker, go to Workers & Pages → `rcquan-mindmeld` → Domains in the dashboard and add mindmeld-game.com as a Custom Domain. This hasn't been tested. Games in progress are lost, and it restores old code that can't take new deploys.
+
+**After rolling back, any `npm run deploy` takes the domain back.** Remove `routes` from `wrangler.jsonc` first if you still need to deploy.

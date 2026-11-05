@@ -37,4 +37,4 @@ PartyKit deployed the app as the `rcquan-mindmeld` Worker, with `PARTYKIT_DURABL
 
 `rcquan-mindmeld-webapp` is a separate Worker in the same account, with one deployment from earlier on 4 Jul 2026. It looks like an earlier attempt, but that's inferred from its name and date.
 
-TODO after cutover: record the status of `rcquan-mindmeld`.
+mindmeld-game.com moved from `rcquan-mindmeld` to `mindmeld-game` on 5 Nov 2026 (UTC). `rcquan-mindmeld` stays in place as the rollback, along with its Durable Object and R2 bucket; see [cloudflare.md](cloudflare.md). Deleting it can't be undone, and it has no public URL now.

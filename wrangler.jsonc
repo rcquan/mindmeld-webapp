@@ -11,6 +11,9 @@
   // Wrangler does not generate these: add a new entry whenever a Durable
   // Object class is added, renamed, or removed. See docs/cloudflare.md.
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MindMeld"] }],
+  "routes": [{ "pattern": "mindmeld-game.com", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
   "assets": { "directory": "./public" },
   "build": { "command": "npm run build:client", "watch_dir": "src" },
   "observability": { "enabled": true }
