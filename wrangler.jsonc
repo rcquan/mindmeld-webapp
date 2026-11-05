@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mindmeld-game",
+  "main": "src/server.ts",
+  "compatibility_date": "2026-07-04",
+  "compatibility_flags": ["nodejs_compat"],
+  // The `Main` binding is what routes /parties/main/:room to this class.
+  "durable_objects": {
+    "bindings": [{ "name": "Main", "class_name": "MindMeld" }]
+  },
+  // Wrangler does not generate these: add a new entry whenever a Durable
+  // Object class is added, renamed, or removed. See docs/cloudflare.md.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MindMeld"] }],
+  "assets": { "directory": "./public" },
+  "build": { "command": "npm run build:client", "watch_dir": "src" },
+  "observability": { "enabled": true }
+}

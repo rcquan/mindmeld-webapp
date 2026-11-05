@@ -1,4 +1,5 @@
 node_modules
-.partykit
+.wrangler
 dist
 *.env
+*.tsbuildinfo
