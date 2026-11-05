@@ -1,4 +1,10 @@
-import type * as Party from "partykit/server";
+import {
+  type Connection,
+  type ConnectionContext,
+  routePartykitRequest,
+  Server,
+  type WSMessage,
+} from "partyserver";
 import {
   type ClientMessage,
   MAX_PLAYERS,
@@ -23,8 +29,11 @@ interface PersistedState {
   roundHistory: RoundResult[];
 }
 
-export default class MindMeld implements Party.Server {
-  readonly options: Party.ServerOptions = { hibernate: true };
+type Env = { Main: DurableObjectNamespace<MindMeld> };
+
+export class MindMeld extends Server<Env> {
+  // Must be static: PartyServer ignores an instance-level `options`.
+  static options = { hibernate: true };
 
   createdAt?: number;
   status: RoomStatus = "lobby";
@@ -32,19 +41,17 @@ export default class MindMeld implements Party.Server {
   currentRound = 0;
   submissions = new Map<string, string>();
   roundHistory: RoundResult[] = [];
-  // Not persisted — PartyKit's own connection manager re-keys its internal
-  // map by connection.id on every accept(), so by the time onConnect runs
-  // for a duplicate identity, the old Connection object is already gone
-  // from room.getConnections(). We keep our own reference so we can still
-  // close it. Lost across a hibernation wake, which just means duplicate-tab
-  // eviction only applies within a single warm instance — acceptable, since
-  // it only affects the rare same-browser-two-tabs case.
-  liveConnections = new Map<string, Party.Connection>();
-
-  constructor(readonly room: Party.Room) {}
+  // Not persisted — tracks which socket is current for each connection id, so
+  // a second socket with the same id (same browser, two tabs) can evict the
+  // first, and the evicted socket's belated close can be ignored. Both sockets
+  // stay in getConnections() until one closes. Lost across a hibernation wake,
+  // which just means duplicate-tab eviction only applies within a single warm
+  // instance — acceptable, since it only affects the rare same-browser-two-tabs
+  // case.
+  liveConnections = new Map<string, Connection>();
 
   async onStart() {
-    const saved = await this.room.storage.get<PersistedState>("state");
+    const saved = await this.ctx.storage.get<PersistedState>("state");
     if (!saved) return;
     this.createdAt = saved.createdAt;
     this.status = saved.status;
@@ -63,10 +70,10 @@ export default class MindMeld implements Party.Server {
       submissions: [...this.submissions.entries()],
       roundHistory: this.roundHistory,
     };
-    await this.room.storage.put("state", state);
+    await this.ctx.storage.put("state", state);
   }
 
-  async onRequest(req: Party.Request): Promise<Response> {
+  async onRequest(req: Request): Promise<Response> {
     if (req.method === "POST") {
       if (this.createdAt === undefined) {
         // Synchronous check-then-set: a Durable Object only interleaves
@@ -102,12 +109,13 @@ export default class MindMeld implements Party.Server {
     });
   }
 
-  send(connection: Party.Connection, message: ServerMessage) {
+  send(connection: Connection, message: ServerMessage) {
     connection.send(JSON.stringify(message));
   }
 
-  broadcast(message: ServerMessage, without?: string[]) {
-    this.room.broadcast(JSON.stringify(message), without);
+  // Named so it doesn't override Server.broadcast, which takes a raw string.
+  broadcastMessage(message: ServerMessage, without?: string[]) {
+    this.broadcast(JSON.stringify(message), without);
   }
 
   playersList(): Player[] {
@@ -135,7 +143,7 @@ export default class MindMeld implements Party.Server {
     return {
       type: "joined",
       you: player,
-      roomCode: this.room.id,
+      roomCode: this.name,
       status: this.status,
       players: this.playersList(),
       round: this.currentRound,
@@ -155,7 +163,7 @@ export default class MindMeld implements Party.Server {
     };
   }
 
-  async onConnect(connection: Party.Connection, ctx: Party.ConnectionContext) {
+  async onConnect(connection: Connection, ctx: ConnectionContext) {
     if (this.createdAt === undefined) {
       this.send(connection, {
         type: "error",
@@ -181,9 +189,10 @@ export default class MindMeld implements Party.Server {
       existing.disconnectedAt = undefined;
       await this.persist();
       this.send(connection, this.joinedMessage(existing));
-      this.broadcast({ type: "players-update", players: this.playersList() }, [
-        connection.id,
-      ]);
+      this.broadcastMessage(
+        { type: "players-update", players: this.playersList() },
+        [connection.id],
+      );
       return;
     }
 
@@ -221,12 +230,13 @@ export default class MindMeld implements Party.Server {
     await this.persist();
 
     this.send(connection, this.joinedMessage(player));
-    this.broadcast({ type: "players-update", players: this.playersList() }, [
-      connection.id,
-    ]);
+    this.broadcastMessage(
+      { type: "players-update", players: this.playersList() },
+      [connection.id],
+    );
   }
 
-  async onClose(connection: Party.Connection) {
+  async onClose(connection: Connection) {
     const player = this.players.get(connection.id);
     if (!player) return;
     // If our own bookkeeping shows a *different* connection object as the
@@ -249,12 +259,15 @@ export default class MindMeld implements Party.Server {
     player.connected = false;
     player.disconnectedAt = Date.now();
     await this.persist();
-    this.broadcast({ type: "players-update", players: this.playersList() });
+    this.broadcastMessage({
+      type: "players-update",
+      players: this.playersList(),
+    });
 
     const liveCount = this.connectedCount();
 
     if (liveCount === 0) {
-      await this.room.storage.setAlarm(Date.now() + GRACE_PERIOD_MS);
+      await this.ctx.storage.setAlarm(Date.now() + GRACE_PERIOD_MS);
       return;
     }
 
@@ -264,7 +277,10 @@ export default class MindMeld implements Party.Server {
       this.submissions.clear();
       this.roundHistory = [];
       await this.persist();
-      this.broadcast({ type: "lobby-reset", players: this.playersList() });
+      this.broadcastMessage({
+        type: "lobby-reset",
+        players: this.playersList(),
+      });
       return;
     }
 
@@ -274,7 +290,7 @@ export default class MindMeld implements Party.Server {
   }
 
   async onAlarm() {
-    const liveIds = new Set([...this.room.getConnections()].map((c) => c.id));
+    const liveIds = new Set([...this.getConnections()].map((c) => c.id));
 
     if (liveIds.size === 0) {
       // Nobody reconnected within the grace period — the room really was
@@ -303,11 +319,16 @@ export default class MindMeld implements Party.Server {
     }
     if (changed) {
       await this.persist();
-      this.broadcast({ type: "players-update", players: this.playersList() });
+      this.broadcastMessage({
+        type: "players-update",
+        players: this.playersList(),
+      });
     }
   }
 
-  async onMessage(message: string, sender: Party.Connection) {
+  async onMessage(sender: Connection, message: WSMessage) {
+    if (typeof message !== "string") return;
+
     let parsed: ClientMessage;
     try {
       parsed = JSON.parse(message);
@@ -323,7 +344,10 @@ export default class MindMeld implements Party.Server {
         if (!label) return;
         player.label = label;
         await this.persist();
-        this.broadcast({ type: "players-update", players: this.playersList() });
+        this.broadcastMessage({
+          type: "players-update",
+          players: this.playersList(),
+        });
         break;
       }
       case "start-game": {
@@ -333,7 +357,10 @@ export default class MindMeld implements Party.Server {
         this.currentRound = 1;
         this.submissions.clear();
         await this.persist();
-        this.broadcast({ type: "round-start", round: this.currentRound });
+        this.broadcastMessage({
+          type: "round-start",
+          round: this.currentRound,
+        });
         break;
       }
       case "submit-word": {
@@ -350,7 +377,7 @@ export default class MindMeld implements Party.Server {
         }
         this.submissions.set(sender.id, word);
         await this.persist();
-        this.broadcast({
+        this.broadcastMessage({
           type: "submission-progress",
           submittedCount: this.submissions.size,
           totalCount: this.connectedCount(),
@@ -368,7 +395,10 @@ export default class MindMeld implements Party.Server {
         this.submissions.clear();
         this.status = "round-active";
         await this.persist();
-        this.broadcast({ type: "round-start", round: this.currentRound });
+        this.broadcastMessage({
+          type: "round-start",
+          round: this.currentRound,
+        });
         break;
       }
       case "play-again": {
@@ -378,7 +408,10 @@ export default class MindMeld implements Party.Server {
         this.roundHistory = [];
         this.submissions.clear();
         await this.persist();
-        this.broadcast({ type: "lobby-reset", players: this.playersList() });
+        this.broadcastMessage({
+          type: "lobby-reset",
+          players: this.playersList(),
+        });
         break;
       }
     }
@@ -400,7 +433,7 @@ export default class MindMeld implements Party.Server {
     });
     await this.persist();
 
-    this.broadcast({
+    this.broadcastMessage({
       type: "round-revealed",
       round: this.currentRound,
       results,
@@ -410,4 +443,11 @@ export default class MindMeld implements Party.Server {
   }
 }
 
-MindMeld satisfies Party.Worker;
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    return (
+      (await routePartykitRequest(request, env)) ||
+      new Response("Not Found", { status: 404 })
+    );
+  },
+} satisfies ExportedHandler<Env>;

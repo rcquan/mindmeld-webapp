@@ -23,10 +23,10 @@ function getClientId(): string {
   return id;
 }
 
-// The frontend and the room server are served from the same PartyKit
-// project, so the page's own origin is always the right host to talk to —
+// The frontend and the room server are served from the same Worker,
+// so the page's own origin is always the right host to talk to —
 // this avoids origin mismatches (e.g. localhost vs 127.0.0.1) that trip CORS.
-const PARTYKIT_HOST = location.host;
+const APP_HOST = location.host;
 
 type Screen =
   | "home"
@@ -348,7 +348,7 @@ function connect(roomCode: string) {
   const label = displayNameInput.value.trim().slice(0, 24);
   localStorage.setItem("mindmeld-name", label);
   socket = new PartySocket({
-    host: PARTYKIT_HOST,
+    host: APP_HOST,
     room: roomCode,
     id: getClientId(),
     query: { label },
@@ -377,7 +377,7 @@ function randomCode(): string {
 
 async function peek(roomCode: string): Promise<RoomInfo> {
   const res = await PartySocket.fetch({
-    host: PARTYKIT_HOST,
+    host: APP_HOST,
     room: roomCode,
   });
   return (await res.json()) as RoomInfo;
@@ -385,7 +385,7 @@ async function peek(roomCode: string): Promise<RoomInfo> {
 
 async function createRoom(roomCode: string): Promise<RoomInfo> {
   const res = await PartySocket.fetch(
-    { host: PARTYKIT_HOST, room: roomCode },
+    { host: APP_HOST, room: roomCode },
     { method: "POST" },
   );
   return (await res.json()) as RoomInfo;

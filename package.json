@@ -3,18 +3,23 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "partykit dev --live",
-    "deploy": "partykit deploy",
+    "dev": "wrangler dev --live-reload",
+    "deploy": "wrangler deploy",
     "lint": "biome check .",
-    "format": "biome check --write ."
+    "format": "biome check --write .",
+    "build:client": "esbuild src/client.ts --bundle --format=esm --sourcemap --minify --outdir=public/dist",
+    "typecheck": "tsc -b"
   },
   "dependencies": {
     "cloudflare": "^6.5.0",
+    "partyserver": "^0.5.10",
     "partysocket": "^1.0.2"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.2",
-    "partykit": "^0.0.110",
-    "typescript": "^5.5.4"
+    "@cloudflare/workers-types": "^5.20261104.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.5.4",
+    "wrangler": "^4.157.0"
   }
 }
