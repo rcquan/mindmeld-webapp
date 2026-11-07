@@ -2,6 +2,8 @@ export type RoomStatus = "lobby" | "round-active" | "revealed" | "matched";
 
 export const MAX_PLAYERS = 6;
 export const MIN_PLAYERS = 2;
+// How long the results screen stays up after someone taps Play again.
+export const RESULTS_COUNTDOWN_MS = 30_000;
 
 export interface Player {
   id: string;
@@ -9,6 +11,8 @@ export interface Player {
   joinedAt: number;
   connected: boolean;
   disconnectedAt?: number;
+  // True once the player chose a label rather than getting `Player N`.
+  named?: boolean;
 }
 
 export interface RoomInfo {
@@ -17,6 +21,8 @@ export interface RoomInfo {
   status: RoomStatus;
   playerCount: number;
   full: boolean;
+  // Label of the earliest-joined player who chose a name, for invite links.
+  hostLabel?: string;
 }
 
 export interface RoundWord {
@@ -38,6 +44,12 @@ export type ClientMessage =
   | { type: "next-round" }
   | { type: "play-again" };
 
+export interface ResultsClosing {
+  // Relative, not absolute, so client clock skew doesn't matter.
+  remainingMs: number;
+  readyIds: string[];
+}
+
 export type ErrorCode = "room-full" | "already-started" | "not-found";
 
 export type ServerMessage =
@@ -52,6 +64,7 @@ export type ServerMessage =
       submissionProgress?: { submittedCount: number; totalCount: number };
       revealResults?: RoundWord[];
       youSubmitted: boolean;
+      resultsClosing?: ResultsClosing;
     }
   | { type: "players-update"; players: Player[] }
   | { type: "error"; code: ErrorCode; message: string }
@@ -65,4 +78,5 @@ export type ServerMessage =
       path: RoundResult[];
     }
   | { type: "lobby-reset"; players: Player[] }
+  | ({ type: "results-closing" } & ResultsClosing)
   | { type: "word-rejected"; message: string };

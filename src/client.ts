@@ -1,13 +1,16 @@
 import "./styles.css";
 
 import PartySocket from "partysocket";
-import type {
-  Player,
-  RoomInfo,
-  RoomStatus,
-  RoundResult,
-  RoundWord,
-  ServerMessage,
+import {
+  MAX_PLAYERS,
+  MIN_PLAYERS,
+  type Player,
+  type ResultsClosing,
+  type RoomInfo,
+  type RoomStatus,
+  type RoundResult,
+  type RoundWord,
+  type ServerMessage,
 } from "./shared";
 
 // How long the client keeps retrying a dropped connection in the background
@@ -48,6 +51,19 @@ interface State {
   path: RoundResult[];
   errorMessage: string;
   wordError: string;
+  // Set while the home screen is showing an invite link's landing page.
+  invite?: Invite;
+  // Set once someone taps Play again on the results screen. `deadline` is
+  // on this client's clock.
+  resultsClosing?: { deadline: number; readyIds: string[] };
+}
+
+type InviteError = "full" | "started" | "not-found" | "network";
+
+interface Invite {
+  code: string;
+  info?: RoomInfo;
+  error?: InviteError;
 }
 
 const state: State = {
@@ -74,6 +90,10 @@ function showToast(message: string) {
 function setPlayers(players: Player[]) {
   if (state.screen !== "home" && players.length < state.players.length) {
     showToast("A player left the room.");
+  } else if (state.screen === "lobby") {
+    const known = new Set(state.players.map((p) => p.id));
+    const joined = players.find((p) => !known.has(p.id));
+    if (joined) showToast(`${joined.label} joined`);
   }
   state.players = players;
 }
@@ -89,14 +109,28 @@ const joinForm = el<HTMLFormElement>("join-form");
 const joinCode = el<HTMLInputElement>("join-code");
 const createRoomBtn = el<HTMLButtonElement>("create-room");
 const displayNameInput = el<HTMLInputElement>("display-name");
+const homeScreen = document.querySelector<HTMLElement>(
+  '[data-screen="home"]',
+) as HTMLElement;
+const inviteHeading = el<HTMLParagraphElement>("invite-heading");
+const inviteHost = el<HTMLParagraphElement>("invite-host");
+const inviteJoinBtn = el<HTMLButtonElement>("invite-join");
+const inviteError = el<HTMLParagraphElement>("invite-error");
+const inviteRecoverBtn = el<HTMLButtonElement>("invite-recover");
+const inviteExitBtn = el<HTMLButtonElement>("invite-exit");
 
 const roomCodeBtn = el<HTMLButtonElement>("copy-code");
 const copyHint = el<HTMLParagraphElement>("copy-hint");
+const inviteBtn = el<HTMLButtonElement>("invite-btn");
+const inviteLabel = el<HTMLSpanElement>("invite-label");
+const inviteHint = el<HTMLParagraphElement>("invite-hint");
 const playerList = el<HTMLUListElement>("player-list");
 const lobbyStatus = el<HTMLParagraphElement>("lobby-status");
 const startGameBtn = el<HTMLButtonElement>("start-game");
 
 const roundLabel = el<HTMLParagraphElement>("round-label");
+const roundPrompt = el<HTMLHeadingElement>("round-prompt");
+const roundHint = el<HTMLParagraphElement>("round-hint");
 const wordForm = el<HTMLFormElement>("word-form");
 const wordInput = el<HTMLInputElement>("word-input");
 const wordError = el<HTMLParagraphElement>("word-error");
@@ -112,6 +146,11 @@ const nextRoundBtn = el<HTMLButtonElement>("next-round");
 const matchedWord = el<HTMLHeadingElement>("matched-word");
 const pathList = el<HTMLOListElement>("path-list");
 const playAgainBtn = el<HTMLButtonElement>("play-again");
+const resultsCountdown = el<HTMLParagraphElement>("results-countdown");
+const shareResultsBtn = el<HTMLButtonElement>("share-results");
+const copyImageBtn = el<HTMLButtonElement>("copy-image");
+const downloadResultsBtn = el<HTMLButtonElement>("download-results");
+const shareHint = el<HTMLParagraphElement>("share-hint");
 
 const errorMessageEl = el<HTMLParagraphElement>("error-message");
 const errorBackBtn = el<HTMLButtonElement>("error-back");
@@ -119,6 +158,31 @@ const errorBackBtn = el<HTMLButtonElement>("error-back");
 function render() {
   for (const section of screens) {
     section.classList.toggle("active", section.dataset.screen === state.screen);
+  }
+
+  if (state.screen === "home") {
+    const invite = state.invite;
+    homeScreen.classList.toggle("invite-mode", Boolean(invite));
+    if (invite) {
+      inviteHeading.textContent = `You're invited to room ${invite.code}`;
+      const host = invite.info?.hostLabel;
+      inviteHost.hidden = !host || Boolean(invite.error);
+      inviteHost.textContent = host ? `${host} is waiting` : "";
+      inviteError.hidden = !invite.error;
+      inviteError.textContent = invite.error
+        ? INVITE_ERROR_TEXT[invite.error]
+        : "";
+      inviteRecoverBtn.hidden = !invite.error;
+      inviteRecoverBtn.textContent =
+        invite.error === "network" ? "Try again" : "Create your own room";
+      // Joining only makes sense once we know the room is open.
+      const joinable = Boolean(invite.info) && !invite.error;
+      inviteJoinBtn.hidden = !joinable;
+      displayNameInput.hidden = Boolean(invite.error);
+      inviteExitBtn.hidden = Boolean(invite.error);
+    } else {
+      displayNameInput.hidden = false;
+    }
   }
 
   if (state.screen === "lobby") {
@@ -132,15 +196,36 @@ function render() {
       li.classList.toggle("player-disconnected", !player.connected);
       playerList.appendChild(li);
     }
-    lobbyStatus.textContent =
-      state.players.length < 2
-        ? `Waiting for players (${state.players.length}/6)…`
-        : `${state.players.length}/6 players — ready when you are`;
-    startGameBtn.disabled = state.players.length < 2;
+    const count = state.players.length;
+    const alone = count < MIN_PLAYERS;
+    lobbyStatus.textContent = alone
+      ? `Waiting for players (${count}/${MAX_PLAYERS})…`
+      : `${count}/${MAX_PLAYERS} players — ready when you are`;
+    startGameBtn.disabled = alone;
+    startGameBtn.classList.toggle("btn-primary", !alone);
+
+    // Inviting is the main action until someone else is here; after that,
+    // starting the game is, and inviting steps back to a text link.
+    inviteBtn.hidden = count >= MAX_PLAYERS;
+    inviteBtn.className = alone ? "btn btn-primary" : "btn-link";
+    inviteLabel.textContent = !canNativeShare
+      ? "Copy invite link"
+      : alone
+        ? "Invite friends"
+        : "Invite more friends";
+    if (inviteBtn.hidden) inviteHint.textContent = "";
   }
 
   if (state.screen === "collecting") {
     roundLabel.textContent = `Round ${state.round}`;
+    // Round 1 is a free pick; every later round is about converging.
+    const firstRound = state.path.length === 0;
+    roundPrompt.textContent = firstRound
+      ? "Type any word that comes to mind"
+      : "Find the middle ground";
+    roundHint.textContent = firstRound
+      ? "Words stay hidden until everyone submits."
+      : "What's the most obvious word that connects these?";
     wordInput.disabled = state.submitted;
     (wordForm.querySelector("button") as HTMLButtonElement).disabled =
       state.submitted;
@@ -208,14 +293,58 @@ function render() {
         .join(" · ")}`;
       pathList.appendChild(li);
     }
+    shareResultsBtn.hidden = !resultCard.file || !canShareFile(resultCard.file);
+    copyImageBtn.hidden = !resultCard.blob || !canCopyImage;
+    downloadResultsBtn.disabled = !resultCard.blob;
+    renderCountdown();
   }
+  syncCountdownTicker();
 
   if (state.screen === "error") {
     errorMessageEl.textContent = state.errorMessage;
   }
 }
 
+function renderCountdown() {
+  const closing = state.resultsClosing;
+  resultsCountdown.hidden = !closing;
+  if (!closing) {
+    playAgainBtn.textContent = "Play again";
+    playAgainBtn.disabled = false;
+    return;
+  }
+  const connected = state.players.filter((p) => p.connected);
+  const readyCount = connected.filter((p) =>
+    closing.readyIds.includes(p.id),
+  ).length;
+  const secondsLeft = Math.ceil((closing.deadline - Date.now()) / 1000);
+  resultsCountdown.textContent =
+    secondsLeft > 0
+      ? `Back to the lobby in ${secondsLeft}s · ${readyCount} of ${connected.length} ready`
+      : "Returning to lobby…";
+  const youReady = Boolean(
+    state.you && closing.readyIds.includes(state.you.id),
+  );
+  playAgainBtn.textContent = youReady ? "Ready ✓" : "I'm ready";
+  playAgainBtn.disabled = youReady;
+}
+
+let countdownTicker: ReturnType<typeof setInterval> | undefined;
+
+// Ticks only the countdown line, and only while one is on screen.
+function syncCountdownTicker() {
+  const active = state.screen === "matched" && Boolean(state.resultsClosing);
+  if (active && !countdownTicker) {
+    countdownTicker = setInterval(renderCountdown, 1000);
+  } else if (!active && countdownTicker) {
+    clearInterval(countdownTicker);
+    countdownTicker = undefined;
+  }
+}
+
 function resetToHome(message?: string) {
+  state.invite = undefined;
+  inviteHint.textContent = "";
   socket?.close();
   socket = undefined;
   clearDisconnectTimer();
@@ -229,6 +358,8 @@ function resetToHome(message?: string) {
   state.revealResults = [];
   state.path = [];
   state.wordError = "";
+  state.resultsClosing = undefined;
+  clearResultCard();
   homeError.hidden = !message;
   homeError.textContent = message ?? "";
   render();
@@ -243,6 +374,7 @@ function usedWordsSet(): Set<string> {
 }
 
 function showError(message: string) {
+  state.resultsClosing = undefined;
   state.errorMessage = message;
   state.screen = "error";
   render();
@@ -252,6 +384,10 @@ function handleMessage(raw: string) {
   const message: ServerMessage = JSON.parse(raw);
   switch (message.type) {
     case "joined": {
+      // Joined via an invite link: drop ?code= so a refresh or a copied
+      // address bar doesn't bring the invite landing back.
+      if (location.search) history.replaceState(null, "", "/");
+      state.invite = undefined;
       state.you = message.you;
       state.roomCode = message.roomCode;
       state.players = message.players;
@@ -261,7 +397,9 @@ function handleMessage(raw: string) {
       state.revealResults = message.revealResults ?? [];
       state.submitted = message.youSubmitted;
       state.wordError = "";
+      state.resultsClosing = toResultsClosing(message.resultsClosing);
       state.screen = statusToScreen(message.status);
+      if (state.screen === "matched") prepareResultCard();
       break;
     }
     case "players-update": {
@@ -304,6 +442,8 @@ function handleMessage(raw: string) {
       state.path = message.path;
       if (message.matched) {
         state.screen = "matched";
+        state.resultsClosing = undefined;
+        prepareResultCard();
       } else {
         state.screen = "revealed";
       }
@@ -317,11 +457,27 @@ function handleMessage(raw: string) {
       state.revealResults = [];
       state.path = [];
       state.wordError = "";
+      state.resultsClosing = undefined;
+      clearResultCard();
       state.screen = "lobby";
+      break;
+    }
+    case "results-closing": {
+      state.resultsClosing = toResultsClosing(message);
       break;
     }
   }
   render();
+}
+
+function toResultsClosing(
+  closing: ResultsClosing | undefined,
+): State["resultsClosing"] {
+  if (!closing) return undefined;
+  return {
+    deadline: Date.now() + closing.remainingMs,
+    readyIds: closing.readyIds,
+  };
 }
 
 function statusToScreen(status: RoomStatus): Screen {
@@ -415,6 +571,39 @@ createRoomBtn.addEventListener("click", async () => {
   }
 });
 
+// Why a room can't be joined right now, or undefined if it can.
+function unjoinableReason(info: RoomInfo): InviteError | undefined {
+  if (!info.exists) return "not-found";
+  if (info.full) return "full";
+  if (info.status !== "lobby") return "started";
+  return undefined;
+}
+
+const JOIN_ERROR_TEXT: Record<InviteError, string> = {
+  "not-found": "Room not found — check the code.",
+  full: `Room is full (${MAX_PLAYERS}/${MAX_PLAYERS}).`,
+  started: "This game already started — ask for a new code.",
+  network: "Couldn't reach the server — check your connection and try again.",
+};
+
+const INVITE_ERROR_TEXT: Record<InviteError, string> = {
+  "not-found": "This invite has expired.",
+  full: `This room is full (${MAX_PLAYERS}/${MAX_PLAYERS}).`,
+  started: "This game has already started. Ask for a new invite after it ends.",
+  network: "Couldn't reach the server. Check your connection.",
+};
+
+async function checkJoinable(
+  code: string,
+): Promise<{ info?: RoomInfo; error?: InviteError }> {
+  try {
+    const info = await peek(code);
+    return { info, error: unjoinableReason(info) };
+  } catch {
+    return { error: "network" };
+  }
+}
+
 joinForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const code = joinCode.value.trim();
@@ -423,36 +612,111 @@ joinForm.addEventListener("submit", async (event) => {
     homeError.textContent = "Enter the 6-digit room code.";
     return;
   }
-  try {
-    const info = await peek(code);
-    if (!info.exists) {
-      homeError.hidden = false;
-      homeError.textContent = "Room not found — check the code.";
-      return;
-    }
-    if (info.full) {
-      homeError.hidden = false;
-      homeError.textContent = "Room is full (6/6).";
-      return;
-    }
-    if (info.status !== "lobby") {
-      homeError.hidden = false;
-      homeError.textContent = "This game already started — ask for a new code.";
-      return;
-    }
-    homeError.hidden = true;
-    connect(code);
-  } catch {
+  const { error } = await checkJoinable(code);
+  if (error) {
     homeError.hidden = false;
-    homeError.textContent =
-      "Couldn't reach the server — check your connection and try again.";
+    homeError.textContent = JOIN_ERROR_TEXT[error];
+    return;
+  }
+  homeError.hidden = true;
+  connect(code);
+});
+
+async function loadInvite(code: string) {
+  state.invite = { code };
+  render();
+  const { info, error } = await checkJoinable(code);
+  // The person may have left the landing while the check was in flight.
+  if (state.invite?.code !== code) return;
+  state.invite = { code, info, error };
+  render();
+  if (!error) displayNameInput.focus();
+}
+
+function exitInviteMode() {
+  state.invite = undefined;
+  history.replaceState(null, "", "/");
+  homeError.hidden = true;
+  render();
+}
+
+inviteJoinBtn.addEventListener("click", async () => {
+  const invite = state.invite;
+  if (!invite) return;
+  inviteJoinBtn.disabled = true;
+  try {
+    // Check again: the room may have filled or started while they typed.
+    const { info, error } = await checkJoinable(invite.code);
+    if (error) {
+      state.invite = { code: invite.code, info, error };
+      render();
+      return;
+    }
+    connect(invite.code);
+  } finally {
+    inviteJoinBtn.disabled = false;
   }
 });
 
+inviteRecoverBtn.addEventListener("click", () => {
+  const invite = state.invite;
+  if (invite?.error === "network") loadInvite(invite.code);
+  else exitInviteMode();
+});
+
+inviteExitBtn.addEventListener("click", exitInviteMode);
+
+function flashHint(hint: HTMLElement, ms = 1500) {
+  hint.hidden = false;
+  setTimeout(() => (hint.hidden = true), ms);
+}
+
 roomCodeBtn.addEventListener("click", async () => {
   await navigator.clipboard.writeText(state.roomCode);
-  copyHint.hidden = false;
-  setTimeout(() => (copyHint.hidden = true), 1500);
+  flashHint(copyHint);
+});
+
+function inviteData(): ShareData {
+  const code = state.roomCode;
+  const name = displayNameInput.value.trim();
+  return {
+    title: "Mind Meld",
+    text: name
+      ? `${name} invited you to Mind Meld. Room ${code}`
+      : `Join my Mind Meld game! Room ${code}`,
+    url: `${location.origin}/?code=${code}`,
+  };
+}
+
+// Phones get the native share sheet (Messages first); browsers without the
+// Web Share API get a copy-to-clipboard button instead.
+const canNativeShare =
+  typeof navigator.share === "function" &&
+  navigator.canShare?.({ title: "x", text: "x", url: location.href }) !== false;
+
+async function copyInvite(data: ShareData) {
+  try {
+    await navigator.clipboard.writeText(`${data.text} ${data.url}`);
+    inviteHint.textContent = "Link copied: paste it into a text";
+  } catch {
+    inviteHint.textContent = `Share this code: ${state.roomCode}`;
+  }
+}
+
+inviteBtn.addEventListener("click", async () => {
+  const data = inviteData();
+  if (!canNativeShare) {
+    await copyInvite(data);
+    return;
+  }
+  try {
+    await navigator.share(data);
+    inviteHint.textContent = "Invite sent. Waiting for friends…";
+  } catch (err) {
+    // Closing the share sheet without picking anything isn't an error.
+    if (err instanceof DOMException && err.name === "AbortError") return;
+    await copyInvite(data);
+  }
 });
 
 startGameBtn.addEventListener("click", () => {
@@ -489,15 +753,246 @@ playAgainBtn.addEventListener("click", () => {
   socket?.send(JSON.stringify({ type: "play-again" }));
 });
 
+// --- Results card ---------------------------------------------------------
+//
+// Rendered as soon as the results screen shows, because Safari only opens
+// the share sheet if navigator.share is called synchronously in the tap
+// handler: there's no time to render the image after the tap.
+
+const resultCard: { blob?: Blob; file?: File; pending?: Promise<Blob> } = {};
+
+const canCopyImage =
+  typeof ClipboardItem !== "undefined" &&
+  typeof navigator.clipboard?.write === "function";
+
+function canShareFile(file: File): boolean {
+  return (
+    typeof navigator.share === "function" &&
+    navigator.canShare?.({ files: [file] }) === true
+  );
+}
+
+function clearResultCard() {
+  resultCard.blob = undefined;
+  resultCard.file = undefined;
+  resultCard.pending = undefined;
+}
+
+function prepareResultCard() {
+  clearResultCard();
+  const word = state.revealResults[0]?.word ?? "";
+  const pending = renderResultCard(word, state.path);
+  resultCard.pending = pending;
+  pending
+    .then((blob) => {
+      if (resultCard.pending !== pending) return;
+      resultCard.blob = blob;
+      const slug = word.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "results";
+      resultCard.file = new File([blob], `mindmeld-${slug}.png`, {
+        type: "image/png",
+      });
+      render();
+    })
+    .catch(() => {
+      // Leave the share buttons hidden/disabled; the on-screen results remain.
+    });
+}
+
+const CARD_WIDTH = 1080;
+const CARD_HEIGHT = 1350;
+const CARD_FONT =
+  'system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif';
+
+function cssColor(name: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+  return value || fallback;
+}
+
+function setFont(ctx: CanvasRenderingContext2D, size: number, weight = 400) {
+  ctx.font = `${weight} ${size}px ${CARD_FONT}`;
+}
+
+// Largest size up to `max` at which `text` fits in `maxWidth`.
+function fitFont(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  max: number,
+  min: number,
+  weight: number,
+): number {
+  let size = max;
+  setFont(ctx, size, weight);
+  while (size > min && ctx.measureText(text).width > maxWidth) {
+    size -= 2;
+    setFont(ctx, size, weight);
+  }
+  return size;
+}
+
+function ellipsize(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let cut = text;
+  while (cut.length > 1 && ctx.measureText(`${cut}…`).width > maxWidth) {
+    cut = cut.slice(0, -1);
+  }
+  return `${cut.trimEnd()}…`;
+}
+
+function renderResultCard(word: string, path: RoundResult[]): Promise<Blob> {
+  const canvas = document.createElement("canvas");
+  canvas.width = CARD_WIDTH;
+  canvas.height = CARD_HEIGHT;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return Promise.reject(new Error("no canvas"));
+
+  const bg = cssColor("--bg", "#faf8f4");
+  const ink = cssColor("--ink", "#1c1a17");
+  const muted = cssColor("--muted", "#8a8579");
+  const line = cssColor("--line", "#e5e1d8");
+  const pad = 96;
+  const contentWidth = CARD_WIDTH - pad * 2;
+  const center = CARD_WIDTH / 2;
+
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+
+  ctx.fillStyle = ink;
+  setFont(ctx, 56, 600);
+  ctx.fillText("Mind Meld", center, 170);
+
+  ctx.fillStyle = muted;
+  setFont(ctx, 40);
+  ctx.fillText("We melded minds on", center, 330);
+
+  ctx.fillStyle = ink;
+  fitFont(ctx, word, contentWidth, 160, 48, 700);
+  ctx.fillText(ellipsize(ctx, word, contentWidth), center, 500);
+
+  const last = path[path.length - 1];
+  const names = last ? last.words.map((w) => w.label).join(", ") : "";
+  const rounds = `${path.length} round${path.length === 1 ? "" : "s"}`;
+  ctx.fillStyle = muted;
+  setFont(ctx, 36);
+  ctx.fillText(
+    ellipsize(ctx, names ? `${rounds} · ${names}` : rounds, contentWidth),
+    center,
+    585,
+  );
+
+  ctx.strokeStyle = line;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(pad, 650);
+  ctx.lineTo(CARD_WIDTH - pad, 650);
+  ctx.stroke();
+
+  // Fit the path between the divider and the footer: shrink the text first,
+  // and only collapse middle rounds if even the smallest size won't fit.
+  const top = 730;
+  const bottom = CARD_HEIGHT - 170;
+  const lineHeight = 1.6;
+  const minSize = 28;
+  const size = Math.max(
+    minSize,
+    Math.min(44, Math.floor((bottom - top) / (path.length * lineHeight))),
+  );
+  const maxRows = Math.max(1, Math.floor((bottom - top) / (size * lineHeight)));
+  type Row = { text: string; matched: boolean };
+  const toRow = (r: RoundResult): Row => ({
+    text: `${r.round}.  ${r.words.map((w) => w.word).join(" · ")}`,
+    matched: r.matched,
+  });
+  let rows: Row[] = path.map(toRow);
+  if (rows.length > maxRows) {
+    const head = rows.slice(0, maxRows - 2);
+    const hidden = rows.length - head.length - 1;
+    rows = [
+      ...head,
+      {
+        text: `+${hidden} more round${hidden === 1 ? "" : "s"}`,
+        matched: false,
+      },
+      rows[rows.length - 1],
+    ];
+  }
+  let y = top + size;
+  for (const row of rows) {
+    ctx.fillStyle = row.matched ? ink : muted;
+    setFont(ctx, size, row.matched ? 600 : 400);
+    ctx.fillText(ellipsize(ctx, row.text, contentWidth), center, y);
+    y += size * lineHeight;
+  }
+
+  ctx.fillStyle = muted;
+  setFont(ctx, 32);
+  ctx.fillText("mindmeld-game.com", center, CARD_HEIGHT - 90);
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("toBlob failed"))),
+      "image/png",
+    );
+  });
+}
+
+function showShareHint(text: string) {
+  shareHint.textContent = text;
+  flashHint(shareHint, 2500);
+}
+
+function downloadResultCard() {
+  const { blob, file } = resultCard;
+  if (!blob) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = file?.name ?? "mindmeld-results.png";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+shareResultsBtn.addEventListener("click", () => {
+  const file = resultCard.file;
+  if (!file) return;
+  // Image only: a text or URL alongside it becomes extra bubbles in SMS.
+  // Called synchronously, without awaiting anything first (see above).
+  navigator.share({ files: [file] }).catch((err) => {
+    if (err instanceof DOMException && err.name === "AbortError") return;
+    showShareHint("Couldn't open sharing. Try Download image instead.");
+  });
+});
+
+copyImageBtn.addEventListener("click", () => {
+  const pending = resultCard.pending;
+  if (!pending) return;
+  // Pass the promise straight to ClipboardItem: Safari rejects a clipboard
+  // write that starts after an await.
+  navigator.clipboard
+    .write([new ClipboardItem({ "image/png": pending })])
+    .then(() => showShareHint("Image copied"))
+    .catch(() => showShareHint("Couldn't copy. Try Download image instead."));
+});
+
+downloadResultsBtn.addEventListener("click", downloadResultCard);
+
 errorBackBtn.addEventListener("click", () => {
   resetToHome();
 });
 
-const params = new URLSearchParams(location.search);
-const prefillCode = params.get("code");
-if (prefillCode && /^\d{6}$/.test(prefillCode)) {
-  joinCode.value = prefillCode;
-}
 displayNameInput.value = localStorage.getItem("mindmeld-name") ?? "";
 
-render();
+const inviteCode = new URLSearchParams(location.search).get("code");
+if (inviteCode && /^\d{6}$/.test(inviteCode)) {
+  loadInvite(inviteCode);
+} else {
+  render();
+}

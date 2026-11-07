@@ -57,6 +57,7 @@ h3 {
 }
 
 .tagline {
+  text-wrap: balance;
   color: var(--muted);
   margin: -0.75rem 0 0;
   font-size: 1.05rem;
@@ -271,6 +272,20 @@ h3 {
   margin: 0;
 }
 
+.share-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.share-secondary {
+  display: flex;
+  gap: 1.25rem;
+  justify-content: center;
+}
+
 .toast {
   position: fixed;
   bottom: 1.5rem;
@@ -306,4 +321,73 @@ h3 {
   .word-form {
     flex-direction: column;
   }
+}
+
+/* Home has two modes: the default create/join controls, and the invite
+   landing shown when someone opens an invite link (?code=). */
+.home-default,
+.invite-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  width: 100%;
+}
+
+.invite-block,
+.invite-mode .home-default {
+  display: none;
+}
+
+.invite-mode .invite-block {
+  display: flex;
+}
+
+.invite-heading {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.invite-icon {
+  width: 1.1em;
+  height: 1.1em;
+  margin-right: 0.45rem;
+  vertical-align: -0.2em;
+}
+
+.btn-link {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 0 0.5rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.btn-link:hover {
+  color: var(--ink);
+}
+
+#invite-hint:empty {
+  display: none;
+}
+
+.rules li + li {
+  margin-top: 0.4rem;
+}
+
+.rules-tip,
+.rules-example-title {
+  margin: 0.75rem 0 0;
+}
+
+.rules-example {
+  padding-left: 1.25rem;
+  margin: 0.4rem 0 0;
 }

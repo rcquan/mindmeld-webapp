@@ -8,12 +8,26 @@
     />
     <title>Mind Meld</title>
     <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="title" content="Mind Meld" />
     <meta
       name="description"
-      content="Say a word. Find the bridge. Meld your minds."
+      content="Choose a word. Find the middle ground. Meld minds."
     />
     <meta name="theme-color" content="#faf8f4" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Mind Meld" />
+    <meta
+      property="og:description"
+      content="Choose a word. Find the middle ground. Meld minds."
+    />
+    <meta property="og:url" content="https://mindmeld-game.com/" />
+    <meta property="og:image" content="https://mindmeld-game.com/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
 
     <link rel="stylesheet" href="/normalize.css" />
     <link rel="stylesheet" href="/dist/client.css" />
@@ -23,7 +37,12 @@
       <!-- HOME -->
       <section data-screen="home" class="screen">
         <h1 class="wordmark">Mind Meld</h1>
-        <p class="tagline">Choose a word. Find the bridge. Meld your minds.</p>
+        <p class="tagline">Choose a word. Find the middle ground. Meld minds.</p>
+
+        <div class="invite-block">
+          <p id="invite-heading" class="invite-heading"></p>
+          <p id="invite-host" class="hint" hidden></p>
+        </div>
 
         <input
           id="display-name"
@@ -34,34 +53,74 @@
           autocomplete="off"
         />
 
-        <button id="create-room" class="btn btn-primary" type="button">
-          Create a room
-        </button>
+        <div class="home-default">
+          <button id="create-room" class="btn btn-primary" type="button">
+            Create a room
+          </button>
 
-        <div class="divider"><span>or</span></div>
+          <div class="divider"><span>or</span></div>
 
-        <form id="join-form" class="join-form">
-          <input
-            id="join-code"
-            class="code-input"
-            type="text"
-            inputmode="numeric"
-            pattern="[0-9]*"
-            maxlength="6"
-            placeholder="6-digit code"
-            autocomplete="off"
-          />
-          <button class="btn" type="submit">Join room</button>
-        </form>
+          <form id="join-form" class="join-form">
+            <input
+              id="join-code"
+              class="code-input"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              maxlength="6"
+              placeholder="6-digit code"
+              autocomplete="off"
+            />
+            <button class="btn" type="submit">Join room</button>
+          </form>
+        </div>
+
+        <div class="invite-block">
+          <button id="invite-join" class="btn btn-primary" type="button">
+            Join game
+          </button>
+          <p id="invite-error" class="error-text" hidden></p>
+          <button id="invite-recover" class="btn" type="button" hidden></button>
+          <button id="invite-exit" class="btn-link" type="button">
+            Not you? Create a new room
+          </button>
+        </div>
+
         <p id="home-error" class="error-text" hidden></p>
 
         <details class="rules">
           <summary>How to play</summary>
           <ol>
-            <li>Type a word &mdash; it stays hidden until everyone submits.</li>
-            <li>All words reveal at once. Not a match? Find a word that bridges everyone's words, then go again.</li>
-            <li>Repeat until every player says the exact same word at the same time.</li>
+            <li>
+              <strong>Submit in secret.</strong> Everyone types any word that
+              comes to mind. Words stay hidden until all players are ready.
+            </li>
+            <li>
+              <strong>Reveal the words.</strong> All words appear at the same
+              time. If everyone typed the exact same word, you've melded minds!
+            </li>
+            <li>
+              <strong>Find the middle ground.</strong> No match? Think of a
+              concept, category or association where everyone's words meet,
+              then submit again. Repeat until you all land on the same word.
+            </li>
           </ol>
+          <p class="rules-tip">
+            <strong>Pro tip:</strong> Don't try to be clever or pick obscure
+            references. Ask yourself: "What's the most obvious word everyone
+            else will think of?"
+          </p>
+          <p class="rules-example-title"><strong>Quick example</strong></p>
+          <ul class="rules-example">
+            <li>
+              Round 1: You say <em>Campfire</em>, your friend says
+              <em>Sweet</em>. No match.
+            </li>
+            <li>
+              Round 2: What obvious word connects <em>Campfire</em> and
+              <em>Sweet</em>? You both say <em>Marshmallow</em>. Mind melded!
+            </li>
+          </ul>
         </details>
       </section>
 
@@ -70,6 +129,12 @@
         <p class="eyebrow">Room code</p>
         <button id="copy-code" class="room-code" type="button" title="Copy code"></button>
         <p id="copy-hint" class="hint" hidden>Copied!</p>
+
+        <button id="invite-btn" class="btn btn-primary" type="button">
+          <!-- Lucide "share-2" icon (ISC license, lucide.dev) -->
+          <svg class="invite-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" x2="15.42" y1="13.51" y2="17.49" /><line x1="15.41" x2="8.59" y1="6.51" y2="10.49" /></svg><span id="invite-label">Invite friends</span>
+        </button>
+        <p id="invite-hint" class="hint" aria-live="polite"></p>
 
         <ul id="player-list" class="player-list"></ul>
         <p id="lobby-status" class="hint"></p>
@@ -82,7 +147,10 @@
       <!-- COLLECTING -->
       <section data-screen="collecting" class="screen">
         <p class="eyebrow" id="round-label">Round 1</p>
-        <h2>Type a word that brings us closer to melded minds!</h2>
+        <h2 id="round-prompt">Type any word that comes to mind</h2>
+        <p id="round-hint" class="hint">
+          Words stay hidden until everyone submits.
+        </p>
 
         <div id="history-wrap" class="history-wrap" hidden>
           <table class="history-table">
@@ -112,7 +180,8 @@
       <!-- REVEALED (no match yet) -->
       <section data-screen="revealed" class="screen">
         <p class="eyebrow" id="revealed-round-label">Round 1</p>
-        <h2>Not a match &mdash; yet</h2>
+        <h2>No match yet</h2>
+        <p class="hint">Look for the middle ground between these words.</p>
         <ul id="reveal-grid" class="reveal-grid"></ul>
         <button id="next-round" class="btn btn-primary" type="button">
           Next round
@@ -121,12 +190,25 @@
 
       <!-- MATCHED -->
       <section data-screen="matched" class="screen">
-        <p class="eyebrow">Mind melded</p>
+        <p class="eyebrow">You melded minds!</p>
         <h2 id="matched-word" class="matched-word">Matched word</h2>
         <ol id="path-list" class="path-list"></ol>
-        <button id="play-again" class="btn btn-primary" type="button">
-          Play again
-        </button>
+        <div class="share-actions">
+          <button id="share-results" class="btn btn-primary" type="button" hidden>
+            Share results
+          </button>
+          <div class="share-secondary">
+            <button id="copy-image" class="btn-link" type="button" hidden>
+              Copy image
+            </button>
+            <button id="download-results" class="btn-link" type="button">
+              Download image
+            </button>
+          </div>
+          <p id="share-hint" class="hint" aria-live="polite" hidden></p>
+        </div>
+        <p id="results-countdown" class="hint" aria-live="polite" hidden></p>
+        <button id="play-again" class="btn" type="button">Play again</button>
       </section>
 
       <!-- ERROR -->

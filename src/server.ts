@@ -10,6 +10,9 @@ import {
   MAX_PLAYERS,
   MIN_PLAYERS,
   type Player,
+  RESULTS_COUNTDOWN_MS,
+  type ResultsClosing,
+  type RoomInfo,
   type RoomStatus,
   type RoundResult,
   type ServerMessage,
@@ -27,6 +30,8 @@ interface PersistedState {
   currentRound: number;
   submissions: [string, string][];
   roundHistory: RoundResult[];
+  resetAt?: number;
+  readyIds?: string[];
 }
 
 type Env = { Main: DurableObjectNamespace<MindMeld> };
@@ -41,6 +46,9 @@ export class MindMeld extends Server<Env> {
   currentRound = 0;
   submissions = new Map<string, string>();
   roundHistory: RoundResult[] = [];
+  // Results countdown: set by the first "play-again" on the matched screen.
+  resetAt?: number;
+  readyIds: string[] = [];
   // Not persisted — tracks which socket is current for each connection id, so
   // a second socket with the same id (same browser, two tabs) can evict the
   // first, and the evicted socket's belated close can be ignored. Both sockets
@@ -59,6 +67,8 @@ export class MindMeld extends Server<Env> {
     this.currentRound = saved.currentRound;
     this.submissions = new Map(saved.submissions);
     this.roundHistory = saved.roundHistory;
+    this.resetAt = saved.resetAt;
+    this.readyIds = saved.readyIds ?? [];
   }
 
   async persist() {
@@ -69,6 +79,8 @@ export class MindMeld extends Server<Env> {
       currentRound: this.currentRound,
       submissions: [...this.submissions.entries()],
       roundHistory: this.roundHistory,
+      resetAt: this.resetAt,
+      readyIds: this.readyIds,
     };
     await this.ctx.storage.put("state", state);
   }
@@ -83,30 +95,24 @@ export class MindMeld extends Server<Env> {
         this.createdAt = Date.now();
         this.status = "lobby";
         await this.persist();
-        return Response.json({
-          exists: true,
-          created: true,
-          status: this.status,
-          playerCount: 0,
-          full: false,
-        });
+        return Response.json(this.roomInfo(true));
       }
-      return Response.json({
-        exists: true,
-        created: false,
-        status: this.status,
-        playerCount: this.players.size,
-        full: this.players.size >= MAX_PLAYERS,
-      });
     }
+    return Response.json(this.roomInfo(false));
+  }
 
-    return Response.json({
+  roomInfo(created: boolean): RoomInfo {
+    const host = [...this.players.values()]
+      .filter((p) => p.named)
+      .sort((a, b) => a.joinedAt - b.joinedAt)[0];
+    return {
       exists: this.createdAt !== undefined,
-      created: false,
+      created,
       status: this.status,
       playerCount: this.players.size,
       full: this.players.size >= MAX_PLAYERS,
-    });
+      hostLabel: host?.label,
+    };
   }
 
   send(connection: Connection, message: ServerMessage) {
@@ -124,6 +130,64 @@ export class MindMeld extends Server<Env> {
 
   connectedCount(): number {
     return [...this.players.values()].filter((p) => p.connected).length;
+  }
+
+  allConnectedReady(): boolean {
+    return [...this.players.values()]
+      .filter((p) => p.connected)
+      .every((p) => this.readyIds.includes(p.id));
+  }
+
+  resultsClosing(): ResultsClosing | undefined {
+    if (this.status !== "matched" || this.resetAt === undefined) return;
+    return {
+      remainingMs: Math.max(0, this.resetAt - Date.now()),
+      readyIds: this.readyIds,
+    };
+  }
+
+  // A Durable Object has a single alarm, shared by the results countdown and
+  // the empty-room grace period, so always arm it for the earliest deadline.
+  async armAlarm() {
+    const now = Date.now();
+    const deadlines: number[] = [];
+    if (
+      this.status === "matched" &&
+      this.resetAt !== undefined &&
+      this.resetAt > now
+    ) {
+      deadlines.push(this.resetAt);
+    }
+    if (this.connectedCount() === 0) {
+      deadlines.push(Math.max(now, this.graceDeadline()));
+    }
+    if (deadlines.length > 0) {
+      await this.ctx.storage.setAlarm(Math.min(...deadlines));
+    }
+  }
+
+  // When an empty room may be torn down: the grace period after the last
+  // player left.
+  graceDeadline(): number {
+    const lastLeft = Math.max(
+      0,
+      ...[...this.players.values()].map((p) => p.disconnectedAt ?? 0),
+    );
+    return lastLeft + GRACE_PERIOD_MS;
+  }
+
+  async resetToLobby() {
+    this.status = "lobby";
+    this.currentRound = 0;
+    this.submissions.clear();
+    this.roundHistory = [];
+    this.resetAt = undefined;
+    this.readyIds = [];
+    await this.persist();
+    this.broadcastMessage({
+      type: "lobby-reset",
+      players: this.playersList(),
+    });
   }
 
   usedWords(): Set<string> {
@@ -160,6 +224,7 @@ export class MindMeld extends Server<Env> {
           ? this.lastRevealResults()
           : undefined,
       youSubmitted: this.submissions.has(player.id),
+      resultsClosing: this.resultsClosing(),
     };
   }
 
@@ -187,12 +252,22 @@ export class MindMeld extends Server<Env> {
       this.liveConnections.set(connection.id, connection);
       existing.connected = true;
       existing.disconnectedAt = undefined;
+      // The alarm may have been pushed back to the grace period while the
+      // room was empty, so an expired countdown is resolved here too.
+      if (
+        this.status === "matched" &&
+        this.resetAt !== undefined &&
+        this.resetAt <= Date.now()
+      ) {
+        await this.resetToLobby();
+      }
       await this.persist();
       this.send(connection, this.joinedMessage(existing));
       this.broadcastMessage(
         { type: "players-update", players: this.playersList() },
         [connection.id],
       );
+      if (this.resetAt !== undefined) await this.armAlarm();
       return;
     }
 
@@ -224,6 +299,7 @@ export class MindMeld extends Server<Env> {
       label: requestedLabel || `Player ${this.players.size + 1}`,
       joinedAt: Date.now(),
       connected: true,
+      named: Boolean(requestedLabel),
     };
     this.players.set(connection.id, player);
     this.liveConnections.set(connection.id, connection);
@@ -267,20 +343,21 @@ export class MindMeld extends Server<Env> {
     const liveCount = this.connectedCount();
 
     if (liveCount === 0) {
-      await this.ctx.storage.setAlarm(Date.now() + GRACE_PERIOD_MS);
+      await this.armAlarm();
+      return;
+    }
+
+    // A finished game has nothing to reset: let people keep the results up
+    // (phones drop the socket just from opening the share sheet).
+    if (this.status === "matched") {
+      if (this.resetAt !== undefined && this.allConnectedReady()) {
+        await this.resetToLobby();
+      }
       return;
     }
 
     if (liveCount < MIN_PLAYERS) {
-      this.status = "lobby";
-      this.currentRound = 0;
-      this.submissions.clear();
-      this.roundHistory = [];
-      await this.persist();
-      this.broadcastMessage({
-        type: "lobby-reset",
-        players: this.playersList(),
-      });
+      await this.resetToLobby();
       return;
     }
 
@@ -293,9 +370,24 @@ export class MindMeld extends Server<Env> {
     const liveIds = new Set([...this.getConnections()].map((c) => c.id));
 
     if (liveIds.size === 0) {
+      // The countdown can fire while everyone is briefly away (e.g. in the
+      // share sheet): finish it, then wait out the grace period.
+      if (this.graceDeadline() > Date.now()) {
+        if (
+          this.status === "matched" &&
+          this.resetAt !== undefined &&
+          this.resetAt <= Date.now()
+        ) {
+          await this.resetToLobby();
+        }
+        await this.armAlarm();
+        return;
+      }
       // Nobody reconnected within the grace period — the room really was
       // abandoned. Tear it down so the room code becomes reusable.
       this.createdAt = undefined;
+      this.resetAt = undefined;
+      this.readyIds = [];
       this.status = "lobby";
       this.players.clear();
       this.submissions.clear();
@@ -324,6 +416,14 @@ export class MindMeld extends Server<Env> {
         players: this.playersList(),
       });
     }
+
+    if (this.status === "matched" && this.resetAt !== undefined) {
+      if (this.resetAt <= Date.now()) {
+        await this.resetToLobby();
+      } else {
+        await this.armAlarm();
+      }
+    }
   }
 
   async onMessage(sender: Connection, message: WSMessage) {
@@ -343,6 +443,7 @@ export class MindMeld extends Server<Env> {
         const label = parsed.label.trim().slice(0, 24);
         if (!label) return;
         player.label = label;
+        player.named = true;
         await this.persist();
         this.broadcastMessage({
           type: "players-update",
@@ -403,15 +504,23 @@ export class MindMeld extends Server<Env> {
       }
       case "play-again": {
         if (this.status !== "matched") return;
-        this.status = "lobby";
-        this.currentRound = 0;
-        this.roundHistory = [];
-        this.submissions.clear();
+        if (!this.players.has(sender.id)) return;
+        if (this.readyIds.includes(sender.id)) return;
+        // Check-then-set before any await, so two simultaneous first taps
+        // can't both start a countdown.
+        this.readyIds.push(sender.id);
+        const firstTap = this.resetAt === undefined;
+        if (firstTap) this.resetAt = Date.now() + RESULTS_COUNTDOWN_MS;
+        if (this.allConnectedReady()) {
+          await this.resetToLobby();
+          return;
+        }
         await this.persist();
-        this.broadcastMessage({
-          type: "lobby-reset",
-          players: this.playersList(),
-        });
+        if (firstTap) await this.armAlarm();
+        const closing = this.resultsClosing();
+        if (closing) {
+          this.broadcastMessage({ type: "results-closing", ...closing });
+        }
         break;
       }
     }
