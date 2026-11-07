@@ -8,12 +8,26 @@
     />
     <title>Mind Meld</title>
     <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="title" content="Mind Meld" />
     <meta
       name="description"
       content="Say a word. Find the bridge. Meld your minds."
     />
     <meta name="theme-color" content="#faf8f4" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Mind Meld" />
+    <meta
+      property="og:description"
+      content="Say a word. Find the bridge. Meld your minds."
+    />
+    <meta property="og:url" content="https://mindmeld-game.com/" />
+    <meta property="og:image" content="https://mindmeld-game.com/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
 
     <link rel="stylesheet" href="/normalize.css" />
     <link rel="stylesheet" href="/dist/client.css" />
@@ -25,6 +39,11 @@
         <h1 class="wordmark">Mind Meld</h1>
         <p class="tagline">Choose a word. Find the bridge. Meld your minds.</p>
 
+        <div class="invite-block">
+          <p id="invite-heading" class="invite-heading"></p>
+          <p id="invite-host" class="hint" hidden></p>
+        </div>
+
         <input
           id="display-name"
           class="code-input"
@@ -34,25 +53,39 @@
           autocomplete="off"
         />
 
-        <button id="create-room" class="btn btn-primary" type="button">
-          Create a room
-        </button>
+        <div class="home-default">
+          <button id="create-room" class="btn btn-primary" type="button">
+            Create a room
+          </button>
 
-        <div class="divider"><span>or</span></div>
+          <div class="divider"><span>or</span></div>
 
-        <form id="join-form" class="join-form">
-          <input
-            id="join-code"
-            class="code-input"
-            type="text"
-            inputmode="numeric"
-            pattern="[0-9]*"
-            maxlength="6"
-            placeholder="6-digit code"
-            autocomplete="off"
-          />
-          <button class="btn" type="submit">Join room</button>
-        </form>
+          <form id="join-form" class="join-form">
+            <input
+              id="join-code"
+              class="code-input"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              maxlength="6"
+              placeholder="6-digit code"
+              autocomplete="off"
+            />
+            <button class="btn" type="submit">Join room</button>
+          </form>
+        </div>
+
+        <div class="invite-block">
+          <button id="invite-join" class="btn btn-primary" type="button">
+            Join game
+          </button>
+          <p id="invite-error" class="error-text" hidden></p>
+          <button id="invite-recover" class="btn" type="button" hidden></button>
+          <button id="invite-exit" class="btn-link" type="button">
+            Not you? Create a new room
+          </button>
+        </div>
+
         <p id="home-error" class="error-text" hidden></p>
 
         <details class="rules">
@@ -70,6 +103,12 @@
         <p class="eyebrow">Room code</p>
         <button id="copy-code" class="room-code" type="button" title="Copy code"></button>
         <p id="copy-hint" class="hint" hidden>Copied!</p>
+
+        <button id="invite-btn" class="btn btn-primary" type="button">
+          <span class="invite-icon" aria-hidden="true">&#9993;</span>
+          <span id="invite-label">Invite friends</span>
+        </button>
+        <p id="invite-hint" class="hint" aria-live="polite"></p>
 
         <ul id="player-list" class="player-list"></ul>
         <p id="lobby-status" class="hint"></p>

@@ -1,13 +1,15 @@
 import "./styles.css";
 
 import PartySocket from "partysocket";
-import type {
-  Player,
-  RoomInfo,
-  RoomStatus,
-  RoundResult,
-  RoundWord,
-  ServerMessage,
+import {
+  MAX_PLAYERS,
+  MIN_PLAYERS,
+  type Player,
+  type RoomInfo,
+  type RoomStatus,
+  type RoundResult,
+  type RoundWord,
+  type ServerMessage,
 } from "./shared";
 
 // How long the client keeps retrying a dropped connection in the background
@@ -48,6 +50,16 @@ interface State {
   path: RoundResult[];
   errorMessage: string;
   wordError: string;
+  // Set while the home screen is showing an invite link's landing page.
+  invite?: Invite;
+}
+
+type InviteError = "full" | "started" | "not-found" | "network";
+
+interface Invite {
+  code: string;
+  info?: RoomInfo;
+  error?: InviteError;
 }
 
 const state: State = {
@@ -74,6 +86,10 @@ function showToast(message: string) {
 function setPlayers(players: Player[]) {
   if (state.screen !== "home" && players.length < state.players.length) {
     showToast("A player left the room.");
+  } else if (state.screen === "lobby") {
+    const known = new Set(state.players.map((p) => p.id));
+    const joined = players.find((p) => !known.has(p.id));
+    if (joined) showToast(`${joined.label} joined`);
   }
   state.players = players;
 }
@@ -89,9 +105,21 @@ const joinForm = el<HTMLFormElement>("join-form");
 const joinCode = el<HTMLInputElement>("join-code");
 const createRoomBtn = el<HTMLButtonElement>("create-room");
 const displayNameInput = el<HTMLInputElement>("display-name");
+const homeScreen = document.querySelector<HTMLElement>(
+  '[data-screen="home"]',
+) as HTMLElement;
+const inviteHeading = el<HTMLParagraphElement>("invite-heading");
+const inviteHost = el<HTMLParagraphElement>("invite-host");
+const inviteJoinBtn = el<HTMLButtonElement>("invite-join");
+const inviteError = el<HTMLParagraphElement>("invite-error");
+const inviteRecoverBtn = el<HTMLButtonElement>("invite-recover");
+const inviteExitBtn = el<HTMLButtonElement>("invite-exit");
 
 const roomCodeBtn = el<HTMLButtonElement>("copy-code");
 const copyHint = el<HTMLParagraphElement>("copy-hint");
+const inviteBtn = el<HTMLButtonElement>("invite-btn");
+const inviteLabel = el<HTMLSpanElement>("invite-label");
+const inviteHint = el<HTMLParagraphElement>("invite-hint");
 const playerList = el<HTMLUListElement>("player-list");
 const lobbyStatus = el<HTMLParagraphElement>("lobby-status");
 const startGameBtn = el<HTMLButtonElement>("start-game");
@@ -121,6 +149,31 @@ function render() {
     section.classList.toggle("active", section.dataset.screen === state.screen);
   }
 
+  if (state.screen === "home") {
+    const invite = state.invite;
+    homeScreen.classList.toggle("invite-mode", Boolean(invite));
+    if (invite) {
+      inviteHeading.textContent = `You're invited to room ${invite.code}`;
+      const host = invite.info?.hostLabel;
+      inviteHost.hidden = !host || Boolean(invite.error);
+      inviteHost.textContent = host ? `${host} is waiting` : "";
+      inviteError.hidden = !invite.error;
+      inviteError.textContent = invite.error
+        ? INVITE_ERROR_TEXT[invite.error]
+        : "";
+      inviteRecoverBtn.hidden = !invite.error;
+      inviteRecoverBtn.textContent =
+        invite.error === "network" ? "Try again" : "Create your own room";
+      // Joining only makes sense once we know the room is open.
+      const joinable = Boolean(invite.info) && !invite.error;
+      inviteJoinBtn.hidden = !joinable;
+      displayNameInput.hidden = Boolean(invite.error);
+      inviteExitBtn.hidden = Boolean(invite.error);
+    } else {
+      displayNameInput.hidden = false;
+    }
+  }
+
   if (state.screen === "lobby") {
     roomCodeBtn.textContent = state.roomCode;
     playerList.innerHTML = "";
@@ -132,11 +185,24 @@ function render() {
       li.classList.toggle("player-disconnected", !player.connected);
       playerList.appendChild(li);
     }
-    lobbyStatus.textContent =
-      state.players.length < 2
-        ? `Waiting for players (${state.players.length}/6)…`
-        : `${state.players.length}/6 players — ready when you are`;
-    startGameBtn.disabled = state.players.length < 2;
+    const count = state.players.length;
+    const alone = count < MIN_PLAYERS;
+    lobbyStatus.textContent = alone
+      ? `Waiting for players (${count}/${MAX_PLAYERS})…`
+      : `${count}/${MAX_PLAYERS} players — ready when you are`;
+    startGameBtn.disabled = alone;
+    startGameBtn.classList.toggle("btn-primary", !alone);
+
+    // Inviting is the main action until someone else is here; after that,
+    // starting the game is, and inviting steps back to a text link.
+    inviteBtn.hidden = count >= MAX_PLAYERS;
+    inviteBtn.className = alone ? "btn btn-primary" : "btn-link";
+    inviteLabel.textContent = !canNativeShare
+      ? "Copy invite link"
+      : alone
+        ? "Invite friends"
+        : "Invite more friends";
+    if (inviteBtn.hidden) inviteHint.textContent = "";
   }
 
   if (state.screen === "collecting") {
@@ -216,6 +282,8 @@ function render() {
 }
 
 function resetToHome(message?: string) {
+  state.invite = undefined;
+  inviteHint.textContent = "";
   socket?.close();
   socket = undefined;
   clearDisconnectTimer();
@@ -252,6 +320,10 @@ function handleMessage(raw: string) {
   const message: ServerMessage = JSON.parse(raw);
   switch (message.type) {
     case "joined": {
+      // Joined via an invite link: drop ?code= so a refresh or a copied
+      // address bar doesn't bring the invite landing back.
+      if (location.search) history.replaceState(null, "", "/");
+      state.invite = undefined;
       state.you = message.you;
       state.roomCode = message.roomCode;
       state.players = message.players;
@@ -415,6 +487,39 @@ createRoomBtn.addEventListener("click", async () => {
   }
 });
 
+// Why a room can't be joined right now, or undefined if it can.
+function unjoinableReason(info: RoomInfo): InviteError | undefined {
+  if (!info.exists) return "not-found";
+  if (info.full) return "full";
+  if (info.status !== "lobby") return "started";
+  return undefined;
+}
+
+const JOIN_ERROR_TEXT: Record<InviteError, string> = {
+  "not-found": "Room not found — check the code.",
+  full: `Room is full (${MAX_PLAYERS}/${MAX_PLAYERS}).`,
+  started: "This game already started — ask for a new code.",
+  network: "Couldn't reach the server — check your connection and try again.",
+};
+
+const INVITE_ERROR_TEXT: Record<InviteError, string> = {
+  "not-found": "This invite has expired.",
+  full: `This room is full (${MAX_PLAYERS}/${MAX_PLAYERS}).`,
+  started: "This game has already started. Ask for a new invite after it ends.",
+  network: "Couldn't reach the server. Check your connection.",
+};
+
+async function checkJoinable(
+  code: string,
+): Promise<{ info?: RoomInfo; error?: InviteError }> {
+  try {
+    const info = await peek(code);
+    return { info, error: unjoinableReason(info) };
+  } catch {
+    return { error: "network" };
+  }
+}
+
 joinForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const code = joinCode.value.trim();
@@ -423,36 +528,111 @@ joinForm.addEventListener("submit", async (event) => {
     homeError.textContent = "Enter the 6-digit room code.";
     return;
   }
-  try {
-    const info = await peek(code);
-    if (!info.exists) {
-      homeError.hidden = false;
-      homeError.textContent = "Room not found — check the code.";
-      return;
-    }
-    if (info.full) {
-      homeError.hidden = false;
-      homeError.textContent = "Room is full (6/6).";
-      return;
-    }
-    if (info.status !== "lobby") {
-      homeError.hidden = false;
-      homeError.textContent = "This game already started — ask for a new code.";
-      return;
-    }
-    homeError.hidden = true;
-    connect(code);
-  } catch {
+  const { error } = await checkJoinable(code);
+  if (error) {
     homeError.hidden = false;
-    homeError.textContent =
-      "Couldn't reach the server — check your connection and try again.";
+    homeError.textContent = JOIN_ERROR_TEXT[error];
+    return;
+  }
+  homeError.hidden = true;
+  connect(code);
+});
+
+async function loadInvite(code: string) {
+  state.invite = { code };
+  render();
+  const { info, error } = await checkJoinable(code);
+  // The person may have left the landing while the check was in flight.
+  if (state.invite?.code !== code) return;
+  state.invite = { code, info, error };
+  render();
+  if (!error) displayNameInput.focus();
+}
+
+function exitInviteMode() {
+  state.invite = undefined;
+  history.replaceState(null, "", "/");
+  homeError.hidden = true;
+  render();
+}
+
+inviteJoinBtn.addEventListener("click", async () => {
+  const invite = state.invite;
+  if (!invite) return;
+  inviteJoinBtn.disabled = true;
+  try {
+    // Check again: the room may have filled or started while they typed.
+    const { info, error } = await checkJoinable(invite.code);
+    if (error) {
+      state.invite = { code: invite.code, info, error };
+      render();
+      return;
+    }
+    connect(invite.code);
+  } finally {
+    inviteJoinBtn.disabled = false;
   }
 });
 
+inviteRecoverBtn.addEventListener("click", () => {
+  const invite = state.invite;
+  if (invite?.error === "network") loadInvite(invite.code);
+  else exitInviteMode();
+});
+
+inviteExitBtn.addEventListener("click", exitInviteMode);
+
+function flashHint(hint: HTMLElement, ms = 1500) {
+  hint.hidden = false;
+  setTimeout(() => (hint.hidden = true), ms);
+}
+
 roomCodeBtn.addEventListener("click", async () => {
   await navigator.clipboard.writeText(state.roomCode);
-  copyHint.hidden = false;
-  setTimeout(() => (copyHint.hidden = true), 1500);
+  flashHint(copyHint);
+});
+
+function inviteData(): ShareData {
+  const code = state.roomCode;
+  const name = displayNameInput.value.trim();
+  return {
+    title: "Mind Meld",
+    text: name
+      ? `${name} invited you to Mind Meld. Room ${code}`
+      : `Join my Mind Meld game! Room ${code}`,
+    url: `${location.origin}/?code=${code}`,
+  };
+}
+
+// Phones get the native share sheet (Messages first); browsers without the
+// Web Share API get a copy-to-clipboard button instead.
+const canNativeShare =
+  typeof navigator.share === "function" &&
+  navigator.canShare?.({ title: "x", text: "x", url: location.href }) !== false;
+
+async function copyInvite(data: ShareData) {
+  try {
+    await navigator.clipboard.writeText(`${data.text} ${data.url}`);
+    inviteHint.textContent = "Link copied: paste it into a text";
+  } catch {
+    inviteHint.textContent = `Share this code: ${state.roomCode}`;
+  }
+}
+
+inviteBtn.addEventListener("click", async () => {
+  const data = inviteData();
+  if (!canNativeShare) {
+    await copyInvite(data);
+    return;
+  }
+  try {
+    await navigator.share(data);
+    inviteHint.textContent = "Invite sent. Waiting for friends…";
+  } catch (err) {
+    // Closing the share sheet without picking anything isn't an error.
+    if (err instanceof DOMException && err.name === "AbortError") return;
+    await copyInvite(data);
+  }
 });
 
 startGameBtn.addEventListener("click", () => {
@@ -493,11 +673,11 @@ errorBackBtn.addEventListener("click", () => {
   resetToHome();
 });
 
-const params = new URLSearchParams(location.search);
-const prefillCode = params.get("code");
-if (prefillCode && /^\d{6}$/.test(prefillCode)) {
-  joinCode.value = prefillCode;
-}
 displayNameInput.value = localStorage.getItem("mindmeld-name") ?? "";
 
-render();
+const inviteCode = new URLSearchParams(location.search).get("code");
+if (inviteCode && /^\d{6}$/.test(inviteCode)) {
+  loadInvite(inviteCode);
+} else {
+  render();
+}

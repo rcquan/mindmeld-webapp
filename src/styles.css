@@ -307,3 +307,55 @@ h3 {
     flex-direction: column;
   }
 }
+
+/* Home has two modes: the default create/join controls, and the invite
+   landing shown when someone opens an invite link (?code=). */
+.home-default,
+.invite-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  width: 100%;
+}
+
+.invite-block,
+.invite-mode .home-default {
+  display: none;
+}
+
+.invite-mode .invite-block {
+  display: flex;
+}
+
+.invite-heading {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.invite-icon {
+  margin-right: 0.4rem;
+}
+
+.btn-link {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 0 0.5rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.btn-link:hover {
+  color: var(--ink);
+}
+
+#invite-hint:empty {
+  display: none;
+}

@@ -9,6 +9,8 @@ export interface Player {
   joinedAt: number;
   connected: boolean;
   disconnectedAt?: number;
+  // True once the player chose a label rather than getting `Player N`.
+  named?: boolean;
 }
 
 export interface RoomInfo {
@@ -17,6 +19,8 @@ export interface RoomInfo {
   status: RoomStatus;
   playerCount: number;
   full: boolean;
+  // Label of the earliest-joined player who chose a name, for invite links.
+  hostLabel?: string;
 }
 
 export interface RoundWord {

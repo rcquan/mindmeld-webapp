@@ -10,6 +10,7 @@ import {
   MAX_PLAYERS,
   MIN_PLAYERS,
   type Player,
+  type RoomInfo,
   type RoomStatus,
   type RoundResult,
   type ServerMessage,
@@ -83,30 +84,24 @@ export class MindMeld extends Server<Env> {
         this.createdAt = Date.now();
         this.status = "lobby";
         await this.persist();
-        return Response.json({
-          exists: true,
-          created: true,
-          status: this.status,
-          playerCount: 0,
-          full: false,
-        });
+        return Response.json(this.roomInfo(true));
       }
-      return Response.json({
-        exists: true,
-        created: false,
-        status: this.status,
-        playerCount: this.players.size,
-        full: this.players.size >= MAX_PLAYERS,
-      });
     }
+    return Response.json(this.roomInfo(false));
+  }
 
-    return Response.json({
+  roomInfo(created: boolean): RoomInfo {
+    const host = [...this.players.values()]
+      .filter((p) => p.named)
+      .sort((a, b) => a.joinedAt - b.joinedAt)[0];
+    return {
       exists: this.createdAt !== undefined,
-      created: false,
+      created,
       status: this.status,
       playerCount: this.players.size,
       full: this.players.size >= MAX_PLAYERS,
-    });
+      hostLabel: host?.label,
+    };
   }
 
   send(connection: Connection, message: ServerMessage) {
@@ -224,6 +219,7 @@ export class MindMeld extends Server<Env> {
       label: requestedLabel || `Player ${this.players.size + 1}`,
       joinedAt: Date.now(),
       connected: true,
+      named: Boolean(requestedLabel),
     };
     this.players.set(connection.id, player);
     this.liveConnections.set(connection.id, connection);
@@ -343,6 +339,7 @@ export class MindMeld extends Server<Env> {
         const label = parsed.label.trim().slice(0, 24);
         if (!label) return;
         player.label = label;
+        player.named = true;
         await this.persist();
         this.broadcastMessage({
           type: "players-update",
