@@ -193,9 +193,22 @@
         <p class="eyebrow">You melded minds!</p>
         <h2 id="matched-word" class="matched-word">Matched word</h2>
         <ol id="path-list" class="path-list"></ol>
-        <button id="play-again" class="btn btn-primary" type="button">
-          Play again
-        </button>
+        <div class="share-actions">
+          <button id="share-results" class="btn btn-primary" type="button" hidden>
+            Share results
+          </button>
+          <div class="share-secondary">
+            <button id="copy-image" class="btn-link" type="button" hidden>
+              Copy image
+            </button>
+            <button id="download-results" class="btn-link" type="button">
+              Download image
+            </button>
+          </div>
+          <p id="share-hint" class="hint" aria-live="polite" hidden></p>
+        </div>
+        <p id="results-countdown" class="hint" aria-live="polite" hidden></p>
+        <button id="play-again" class="btn" type="button">Play again</button>
       </section>
 
       <!-- ERROR -->

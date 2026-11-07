@@ -272,6 +272,20 @@ h3 {
   margin: 0;
 }
 
+.share-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.share-secondary {
+  display: flex;
+  gap: 1.25rem;
+  justify-content: center;
+}
+
 .toast {
   position: fixed;
   bottom: 1.5rem;
