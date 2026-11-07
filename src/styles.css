@@ -57,6 +57,7 @@ h3 {
 }
 
 .tagline {
+  text-wrap: balance;
   color: var(--muted);
   margin: -0.75rem 0 0;
   font-size: 1.05rem;
@@ -335,7 +336,10 @@ h3 {
 }
 
 .invite-icon {
-  margin-right: 0.4rem;
+  width: 1.1em;
+  height: 1.1em;
+  margin-right: 0.45rem;
+  vertical-align: -0.2em;
 }
 
 .btn-link {
@@ -358,4 +362,18 @@ h3 {
 
 #invite-hint:empty {
   display: none;
+}
+
+.rules li + li {
+  margin-top: 0.4rem;
+}
+
+.rules-tip,
+.rules-example-title {
+  margin: 0.75rem 0 0;
+}
+
+.rules-example {
+  padding-left: 1.25rem;
+  margin: 0.4rem 0 0;
 }

@@ -125,6 +125,8 @@ const lobbyStatus = el<HTMLParagraphElement>("lobby-status");
 const startGameBtn = el<HTMLButtonElement>("start-game");
 
 const roundLabel = el<HTMLParagraphElement>("round-label");
+const roundPrompt = el<HTMLHeadingElement>("round-prompt");
+const roundHint = el<HTMLParagraphElement>("round-hint");
 const wordForm = el<HTMLFormElement>("word-form");
 const wordInput = el<HTMLInputElement>("word-input");
 const wordError = el<HTMLParagraphElement>("word-error");
@@ -207,6 +209,14 @@ function render() {
 
   if (state.screen === "collecting") {
     roundLabel.textContent = `Round ${state.round}`;
+    // Round 1 is a free pick; every later round is about converging.
+    const firstRound = state.path.length === 0;
+    roundPrompt.textContent = firstRound
+      ? "Type any word that comes to mind"
+      : "Find the middle ground";
+    roundHint.textContent = firstRound
+      ? "Words stay hidden until everyone submits."
+      : "What's the most obvious word that connects these?";
     wordInput.disabled = state.submitted;
     (wordForm.querySelector("button") as HTMLButtonElement).disabled =
       state.submitted;
