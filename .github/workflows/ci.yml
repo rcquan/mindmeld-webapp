@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  # deploy.yml calls this on pushes to main, so there's no push trigger here.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Lint and format check
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build and validate Worker (dry-run deploy)
+        run: npx wrangler deploy --dry-run --outdir .wrangler/dry-run
+      - name: Multiplayer smoke test
+        run: npm run smoke

@@ -1,10 +1,11 @@
 ---
 name: verify
-description: Verify a change to the Mind Meld app by running the local dev server and exercising the multiplayer flow across multiple browser tabs. Use after any change to src/server.ts, src/client.ts, or src/shared.ts, since there is no automated test suite.
+description: Verify a change to the Mind Meld app by running the local dev server and exercising the multiplayer flow across multiple browser tabs. Use after any change to src/server.ts, src/client.ts, or src/shared.ts. The automated smoke test covers only the core game flow.
 ---
 
-This project has no automated test suite — verification means driving the real multiplayer flow by hand.
+The only automated check is `npm run smoke`, which CI also runs. It plays a headless 2-player game covering create, join, start, a mismatched round, a matched round, and the `already-started` and `not-found` errors. Everything else means driving the real multiplayer flow by hand.
 
+0. Run `npm run smoke` first. If it fails, fix that before checking anything in a browser. If your change altered messages or the game flow, update `scripts/smoke-test.mjs` to match.
 1. Run `npm run dev` (starts `wrangler dev --live-reload`) if it isn't already running.
 2. Open at least two browser tabs/windows pointed at the local dev URL (Wrangler prints it on startup, typically `http://localhost:8787`). Tabs on the same origin share a client ID and count as one player, so use `localhost` in one and `127.0.0.1` in the other.
 3. In tab 1, create a room and note the 6-digit code. In tab 2 (and more, up to `MAX_PLAYERS`), join that room with the code.
