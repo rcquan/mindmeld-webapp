@@ -159,6 +159,15 @@ async function run() {
   await Promise.all([waitFor(a, "round-start"), waitFor(b, "round-start")]);
   step("game started");
 
+  // Malformed input must be ignored without crashing the Durable Object
+  // (an uncaught error would show up in the wrangler output check).
+  send(a, { type: "submit-word", word: 123 });
+  send(a, { type: "set-label", label: null });
+  send(a, { type: "submit-word", word: "x".repeat(200_000) });
+  const rejected = await waitFor(a, "word-rejected");
+  assert(/at most 40/.test(rejected.message), "oversized word is rejected");
+  step("malformed and oversized input rejected");
+
   await playRound(a, b, "apple", "banana", false);
   step("round 1 revealed without a match");
 
