@@ -1,9 +1,52 @@
+/* Palette and type shared with The Sum of Us: a printed-manual look. */
 :root {
-  --bg: #faf8f4;
-  --ink: #1c1a17;
-  --muted: #8a8579;
-  --line: #e5e1d8;
-  --accent: #1c1a17;
+  --bg: #f5f0e8;
+  --surface: #ede8dc;
+  --field: #fffdf8;
+  --ink: #1a1410;
+  --body: #3a3229;
+  --muted: #6b6155;
+  --line: #c8bfaf;
+  --accent: #c1440e;
+  --gold: #b8922a;
+  --on-ink: #f5f0e8;
+  --error: #b3261e;
+  --serif: "Playfair Display", Georgia, serif;
+  --mono: "DM Mono", ui-monospace, monospace;
+  --sans: Lato, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1a1410;
+    --surface: #2a221b;
+    --field: #231c16;
+    --ink: #f5f0e8;
+    --body: #ddd4c6;
+    --muted: #a89c8c;
+    --line: #4a3f34;
+    --accent: #e0663a;
+    --gold: #d4ad4a;
+    --on-ink: #1a1410;
+    --error: #f2867d;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #1a1410;
+  --surface: #2a221b;
+  --field: #231c16;
+  --ink: #f5f0e8;
+  --body: #ddd4c6;
+  --muted: #a89c8c;
+  --line: #4a3f34;
+  --accent: #e0663a;
+  --gold: #d4ad4a;
+  --on-ink: #1a1410;
+  --error: #f2867d;
+  color-scheme: dark;
 }
 
 * {
@@ -12,21 +55,36 @@
 
 body {
   margin: 0;
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: var(--sans);
+  font-weight: 400;
   font-size: 18px;
-  line-height: 1.5;
-  color: var(--ink);
+  line-height: 1.55;
+  color: var(--body);
   background: var(--bg);
+}
+
+/* Playfair defaults to old-style figures, where 0 reads as "o" and 1 sits
+   low; room codes and round numbers need lining figures. */
+h1,
+h2,
+h3,
+.room-code {
+  font-variant-numeric: lining-nums;
 }
 
 h1,
 h2,
 h3 {
-  font-weight: 600;
+  font-family: var(--serif);
+  font-weight: 700;
   line-height: 1.15;
-  margin: 0 0 0.5rem;
-  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+h2 {
+  font-size: 1.9rem;
 }
 
 #app {
@@ -34,13 +92,13 @@ h3 {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2rem 1.25rem;
+  padding: 2rem 1rem;
 }
 
 .screen {
   display: none;
   width: 100%;
-  max-width: 420px;
+  max-width: 440px;
   text-align: center;
 }
 
@@ -52,36 +110,51 @@ h3 {
 }
 
 .wordmark {
-  font-size: 2.75rem;
-  margin: 0;
+  font-size: 3.25rem;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.wordmark em {
+  font-style: italic;
+  color: var(--gold);
 }
 
 .tagline {
   text-wrap: balance;
+  font-family: var(--serif);
+  font-style: italic;
   color: var(--muted);
-  margin: -0.75rem 0 0;
-  font-size: 1.05rem;
+  margin: -0.5rem 0 0;
+  font-size: 1.1rem;
 }
 
 .eyebrow {
+  font-family: var(--mono);
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.8rem;
-  color: var(--muted);
+  letter-spacing: 0.22em;
+  font-size: 0.7rem;
+  color: var(--accent);
   margin: 0;
+}
+
+.eyebrow-gold {
+  color: var(--gold);
 }
 
 .btn {
   appearance: none;
-  border: 1px solid var(--line);
+  border: 1px solid var(--ink);
   background: transparent;
   color: var(--ink);
+  font-family: var(--sans);
   font-size: 1.05rem;
-  font-weight: 600;
+  font-weight: 700;
   padding: 0.85rem 1.5rem;
-  border-radius: 999px;
+  border-radius: 3px;
   cursor: pointer;
   min-width: 12rem;
+  min-height: 48px;
 }
 
 .btn:disabled {
@@ -90,9 +163,15 @@ h3 {
 }
 
 .btn-primary {
-  background: var(--accent);
-  color: var(--bg);
-  border-color: var(--accent);
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+.btn:focus-visible,
+.btn-link:focus-visible,
+.room-code:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .divider {
@@ -119,27 +198,32 @@ h3 {
   width: 100%;
 }
 
-.code-input,
-.word-input {
+.text-input {
   flex: 1;
   min-width: 0;
+  width: 100%;
+  font-family: var(--sans);
   font-size: 1.1rem;
   padding: 0.85rem 1rem;
-  border-radius: 999px;
+  border-radius: 3px;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--field);
   color: var(--ink);
   text-align: center;
 }
 
-.code-input:focus,
-.word-input:focus {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
+.text-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.word-input {
+  font-family: var(--serif);
+  font-size: 1.35rem;
 }
 
 .error-text {
-  color: #b3261e;
+  color: var(--error);
   font-size: 0.95rem;
   margin: 0;
 }
@@ -150,22 +234,34 @@ h3 {
   margin: 0;
 }
 
+/* Rules */
 .rules {
   width: 100%;
   text-align: left;
-  color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.92rem;
 }
 
 .rules summary {
   cursor: pointer;
   text-align: center;
   color: var(--ink);
-  font-weight: 600;
+  font-weight: 700;
+  min-height: 44px;
+  line-height: 44px;
 }
 
 .rules ol {
   padding-left: 1.25rem;
+}
+
+.rules-tip,
+.rules-example-title {
+  margin: 0.75rem 0 0;
+}
+
+.rules-example {
+  padding-left: 1.25rem;
+  margin: 0.4rem 0 0;
 }
 
 .room-code {
@@ -173,6 +269,7 @@ h3 {
   border: none;
   background: none;
   cursor: pointer;
+  font-family: var(--serif);
   font-size: 3rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -180,21 +277,24 @@ h3 {
   padding: 0;
 }
 
-.player-list {
+.player-list,
+.reveal-grid,
+.path-list {
   list-style: none;
   padding: 0;
   margin: 0;
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.4rem;
 }
 
 .player-list li {
   border: 1px solid var(--line);
-  border-radius: 0.75rem;
+  border-radius: 3px;
   padding: 0.6rem 1rem;
-  background: #fff;
+  background: var(--field);
+  color: var(--ink);
 }
 
 .player-disconnected {
@@ -202,18 +302,20 @@ h3 {
   font-style: italic;
 }
 
+/* Word history, one column per player */
 .history-wrap {
   width: 100%;
   overflow-x: auto;
   border: 1px solid var(--line);
-  border-radius: 0.75rem;
-  background: #fff;
+  border-radius: 3px;
+  background: var(--field);
 }
 
 .history-table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
+  color: var(--ink);
 }
 
 .history-table th,
@@ -225,7 +327,12 @@ h3 {
 }
 
 .history-table thead th {
-  font-weight: 600;
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
   border-bottom: 1px solid var(--line);
 }
 
@@ -233,43 +340,95 @@ h3 {
   border-bottom: 1px solid var(--line);
 }
 
-.reveal-grid,
-.path-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
+/* Reveal */
 .reveal-grid li {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
   border: 1px solid var(--line);
-  border-radius: 0.75rem;
+  border-radius: 3px;
   padding: 0.6rem 1rem;
-  background: #fff;
+  background: var(--field);
+  color: var(--muted);
+  text-align: left;
 }
 
 .reveal-grid .word {
-  font-weight: 600;
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* Matched */
+.matched-word {
+  font-size: 2.6rem;
+  overflow-wrap: anywhere;
 }
 
 .path-list li {
+  display: grid;
+  grid-template-columns: 2.25rem 1fr;
+  align-items: baseline;
+  text-align: left;
   color: var(--muted);
   font-size: 0.95rem;
+  padding: 0.35rem 0.75rem;
+  border-left: 3px solid transparent;
+}
+
+.path-round {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+}
+
+/* Each word is its own flex item, so lines break only between words. */
+.path-words {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 0.15rem;
+  min-width: 0;
+}
+
+.path-word {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.path-word:not(:last-child)::after {
+  content: "·" / "";
+  padding: 0 0.4em;
 }
 
 .path-list li.matched-row {
-  color: var(--ink);
-  font-weight: 600;
+  background: var(--surface);
+  border-left-color: var(--gold);
+  padding-top: 0.6rem;
+  padding-bottom: 0.6rem;
 }
 
-.matched-word {
-  font-size: 2.5rem;
-  margin: 0;
+.path-marker {
+  grid-column: 1 / -1;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .share-actions {
@@ -292,11 +451,12 @@ h3 {
   left: 50%;
   transform: translateX(-50%);
   background: var(--ink);
-  color: var(--bg);
+  color: var(--on-ink);
   padding: 0.6rem 1.25rem;
-  border-radius: 999px;
+  border-radius: 3px;
   font-size: 0.9rem;
   margin: 0;
+  max-width: calc(100vw - 2rem);
 }
 
 @media (max-width: 480px) {
@@ -305,7 +465,7 @@ h3 {
   }
 
   .wordmark {
-    font-size: 2.25rem;
+    font-size: 2.6rem;
   }
 
   .room-code {
@@ -345,7 +505,8 @@ h3 {
 
 .invite-heading {
   font-size: 1.15rem;
-  font-weight: 600;
+  font-weight: 700;
+  color: var(--ink);
   margin: 0;
 }
 
@@ -361,8 +522,9 @@ h3 {
   border: none;
   background: none;
   color: var(--muted);
+  font-family: var(--sans);
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: 700;
   min-height: 44px;
   padding: 0 0.5rem;
   cursor: pointer;
@@ -382,12 +544,9 @@ h3 {
   margin-top: 0.4rem;
 }
 
-.rules-tip,
-.rules-example-title {
-  margin: 0.75rem 0 0;
-}
-
-.rules-example {
-  padding-left: 1.25rem;
-  margin: 0.4rem 0 0;
+/* Several hideable elements set their own display (flex forms, lists),
+   which would otherwise beat the user-agent [hidden] rule. */
+[hidden] {
+  /* biome-ignore lint/complexity/noImportantStyles: must win over class display rules */
+  display: none !important;
 }

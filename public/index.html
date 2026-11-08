@@ -15,7 +15,7 @@
       name="description"
       content="Choose a word. Find the middle ground. Meld minds."
     />
-    <meta name="theme-color" content="#faf8f4" />
+    <meta name="theme-color" content="#1a1410" />
 
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Mind Meld" />
@@ -29,6 +29,12 @@
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
 
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Mono:wght@400;500&family=Lato:wght@300;400;700&display=swap"
+    />
     <link rel="stylesheet" href="/normalize.css" />
     <link rel="stylesheet" href="/dist/client.css" />
   </head>
@@ -36,7 +42,8 @@
     <main id="app">
       <!-- HOME -->
       <section data-screen="home" class="screen">
-        <h1 class="wordmark">Mind Meld</h1>
+        <p class="eyebrow eyebrow-gold">A party game</p>
+        <h1 class="wordmark">Mind <em>Meld</em></h1>
         <p class="tagline">Choose a word. Find the middle ground. Meld minds.</p>
 
         <div class="invite-block">
@@ -46,7 +53,7 @@
 
         <input
           id="display-name"
-          class="code-input"
+          class="text-input"
           type="text"
           maxlength="24"
           placeholder="Your name (optional)"
@@ -63,7 +70,7 @@
           <form id="join-form" class="join-form">
             <input
               id="join-code"
-              class="code-input"
+              class="text-input"
               type="text"
               inputmode="numeric"
               pattern="[0-9]*"
@@ -164,7 +171,7 @@
         <form id="word-form" class="word-form">
           <input
             id="word-input"
-            class="word-input"
+            class="text-input word-input"
             type="text"
             maxlength="40"
             placeholder="your word"
