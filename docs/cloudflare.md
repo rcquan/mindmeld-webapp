@@ -39,12 +39,36 @@ Workers globals conflict with the browser's DOM types, so there are two TypeScri
 
 ## Deploying
 
+Every push to `main` deploys to production through `.github/workflows/deploy.yml`. The workflow first runs the CI checks from `ci.yml` and then runs `npm run deploy`. You can also start it by hand from the Actions tab, but only a run from `main` deploys. Deploys queue rather than cancel each other. There's no staging environment. Expect open WebSockets to drop on deploy; room state is in storage, and `partysocket` reconnects clients.
+
+The workflow reads two secrets from the GitHub `production` environment, which is restricted to the `main` branch:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`: a custom token with these permissions:
+  - Account: Workers Scripts:Edit, Account Settings:Read
+  - Zone mindmeld-game.com: Workers Routes:Edit, Zone:Read
+  - User: Memberships:Read, User Details:Read
+
+  Workers Routes and Zone access are there because the Custom Domain in `routes` is re-attached on every deploy. DNS:Edit isn't needed, because Cloudflare manages the domain's DNS record. If a deploy fails on a missing permission, the error names it.
+
+### When CI or a deploy fails
+
+- Find the failing step with `gh run list --limit 5`, then `gh run view <id> --log-failed`.
+- Lint, typecheck and the dry-run fail the same way locally, so rerun the matching `npm run` command.
+- When the smoke test fails, the log shows which step timed out or failed its assertion, plus the full `wrangler dev` output. Reproduce it with `npm run smoke`.
+  - It uses ports 8799 and 9239 and a temporary state directory, so it can run alongside `npm run dev`.
+  - If it fails with "did not start in time", something is probably still holding port 8799 (`lsof -i :8799`).
+- If the smoke test passes but the deploy step fails, the cause is usually the token. Check its permissions against the list above.
+- A failed deploy leaves the previous version live. To ship a fix, push it to `main` or rerun the workflow.
+
+Don't add `push` to `ci.yml`. `deploy.yml` already runs CI on `main`, and a second run there wastes runner time.
+
+To deploy by hand, for example in an emergency:
+
 ```bash
 npx wrangler login
 npm run deploy
 ```
-
-`npm run deploy` goes straight to production, and there's no staging environment. Expect open WebSockets to drop on deploy; room state is in storage, and `partysocket` reconnects clients.
 
 ## Secrets
 
@@ -64,4 +88,4 @@ Wrangler moves a Custom Domain between Workers without asking: the cutover from 
 
 To roll back to the PartyKit Worker, go to Workers & Pages → `rcquan-mindmeld` → Domains in the dashboard and add mindmeld-game.com as a Custom Domain. This hasn't been tested. Games in progress are lost, and it restores old code that can't take new deploys.
 
-**After rolling back, any `npm run deploy` takes the domain back.** Remove `routes` from `wrangler.jsonc` first if you still need to deploy.
+**After rolling back, any `npm run deploy`, and so any merge to `main`, takes the domain back.** Remove `routes` from `wrangler.jsonc` first if you still need to deploy.

@@ -2,6 +2,7 @@ import "./styles.css";
 
 import PartySocket from "partysocket";
 import {
+  MAX_LABEL_LENGTH,
   MAX_PLAYERS,
   MIN_PLAYERS,
   type Player,
@@ -501,7 +502,7 @@ function clearDisconnectTimer() {
 }
 
 function connect(roomCode: string) {
-  const label = displayNameInput.value.trim().slice(0, 24);
+  const label = displayNameInput.value.trim().slice(0, MAX_LABEL_LENGTH);
   localStorage.setItem("mindmeld-name", label);
   socket = new PartySocket({
     host: APP_HOST,

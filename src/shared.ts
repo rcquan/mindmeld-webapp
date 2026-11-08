@@ -2,6 +2,9 @@ export type RoomStatus = "lobby" | "round-active" | "revealed" | "matched";
 
 export const MAX_PLAYERS = 6;
 export const MIN_PLAYERS = 2;
+// Enforced by the server; public/index.html sets the same maxlength on the inputs.
+export const MAX_WORD_LENGTH = 40;
+export const MAX_LABEL_LENGTH = 24;
 // How long the results screen stays up after someone taps Play again.
 export const RESULTS_COUNTDOWN_MS = 30_000;
 

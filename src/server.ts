@@ -7,7 +7,9 @@ import {
 } from "partyserver";
 import {
   type ClientMessage,
+  MAX_LABEL_LENGTH,
   MAX_PLAYERS,
+  MAX_WORD_LENGTH,
   MIN_PLAYERS,
   type Player,
   RESULTS_COUNTDOWN_MS,
@@ -293,7 +295,7 @@ export class MindMeld extends Server<Env> {
     const requestedLabel = new URL(ctx.request.url).searchParams
       .get("label")
       ?.trim()
-      .slice(0, 24);
+      .slice(0, MAX_LABEL_LENGTH);
     const player: Player = {
       id: connection.id,
       label: requestedLabel || `Player ${this.players.size + 1}`,
@@ -440,7 +442,8 @@ export class MindMeld extends Server<Env> {
       case "set-label": {
         const player = this.players.get(sender.id);
         if (!player || this.status !== "lobby") return;
-        const label = parsed.label.trim().slice(0, 24);
+        if (typeof parsed.label !== "string") return;
+        const label = parsed.label.trim().slice(0, MAX_LABEL_LENGTH);
         if (!label) return;
         player.label = label;
         player.named = true;
@@ -467,8 +470,19 @@ export class MindMeld extends Server<Env> {
       case "submit-word": {
         if (this.status !== "round-active") return;
         if (!this.players.has(sender.id)) return;
+        if (typeof parsed.word !== "string") return;
         const word = parsed.word.trim();
         if (!word) return;
+        // The input's maxlength is client-side only. Without this, one huge
+        // word pushes the persisted state past the 128 KiB storage value
+        // limit and every later persist() fails, freezing the room.
+        if (word.length > MAX_WORD_LENGTH) {
+          this.send(sender, {
+            type: "word-rejected",
+            message: `Words can be at most ${MAX_WORD_LENGTH} characters.`,
+          });
+          return;
+        }
         if (this.usedWords().has(word.toLowerCase())) {
           this.send(sender, {
             type: "word-rejected",
