@@ -285,15 +285,7 @@ function render() {
 
   if (state.screen === "matched") {
     matchedWord.textContent = state.revealResults[0]?.word ?? "";
-    pathList.innerHTML = "";
-    for (const round of state.path) {
-      const li = document.createElement("li");
-      li.className = round.matched ? "matched-row" : "";
-      li.textContent = `Round ${round.round}: ${round.words
-        .map((w) => w.word)
-        .join(" · ")}`;
-      pathList.appendChild(li);
-    }
+    renderPathList();
     shareResultsBtn.hidden = !resultCard.file || !canShareFile(resultCard.file);
     copyImageBtn.hidden = !resultCard.blob || !canCopyImage;
     downloadResultsBtn.disabled = !resultCard.blob;
@@ -303,6 +295,93 @@ function render() {
 
   if (state.screen === "error") {
     errorMessageEl.textContent = state.errorMessage;
+  }
+}
+
+interface Participant {
+  id: string;
+  label: string;
+}
+
+// Everyone who submitted a word in any round, in join order. Players who
+// have since left keep the name stored with their words and go last, in the
+// order they first played. Spectators who never submitted are left out.
+function participantOrder(
+  path: RoundResult[],
+  players: Player[],
+): Participant[] {
+  const firstSeen = new Map<string, { label: string; index: number }>();
+  for (const round of path) {
+    for (const w of round.words) {
+      if (!firstSeen.has(w.playerId)) {
+        firstSeen.set(w.playerId, { label: w.label, index: firstSeen.size });
+      }
+    }
+  }
+  const current = new Map(players.map((p) => [p.id, p]));
+  return [...firstSeen.entries()]
+    .map(([id, seen]) => {
+      const player = current.get(id);
+      return {
+        id,
+        label: player?.label ?? seen.label,
+        joinedAt: player?.joinedAt ?? Number.POSITIVE_INFINITY,
+        index: seen.index,
+      };
+    })
+    .sort((a, b) => a.joinedAt - b.joinedAt || a.index - b.index)
+    .map(({ id, label }) => ({ id, label }));
+}
+
+// A round's words in participant order, with each player's current name.
+function orderedWords(round: RoundResult, order: Participant[]): RoundWord[] {
+  const words: RoundWord[] = [];
+  for (const p of order) {
+    const w = round.words.find((rw) => rw.playerId === p.id);
+    if (w) words.push({ ...w, label: p.label });
+  }
+  return words;
+}
+
+function srOnly(text: string): HTMLSpanElement {
+  const span = document.createElement("span");
+  span.className = "sr-only";
+  span.textContent = text;
+  return span;
+}
+
+// The rounds that led to the match, ending in a marker instead of repeating
+// the matched word, which the headline already shows.
+function renderPathList() {
+  pathList.innerHTML = "";
+  const order = participantOrder(state.path, state.players);
+  for (const round of state.path) {
+    if (round.matched) continue;
+    const li = document.createElement("li");
+    const num = document.createElement("span");
+    num.className = "path-round";
+    num.append(srOnly("Round "), String(round.round));
+    const words = document.createElement("span");
+    words.className = "path-words";
+    for (const w of orderedWords(round, order)) {
+      const span = document.createElement("span");
+      span.className = "path-word";
+      span.append(srOnly(`${w.label}: `), w.word);
+      words.appendChild(span);
+    }
+    li.append(num, words);
+    pathList.appendChild(li);
+  }
+  const last = state.path[state.path.length - 1];
+  if (last) {
+    const li = document.createElement("li");
+    li.className = "matched-row";
+    const marker = document.createElement("span");
+    marker.className = "path-marker";
+    marker.textContent =
+      state.path.length === 1 ? "First try" : `Melded in round ${last.round}`;
+    li.appendChild(marker);
+    pathList.appendChild(li);
   }
 }
 
@@ -782,7 +861,12 @@ function clearResultCard() {
 function prepareResultCard() {
   clearResultCard();
   const word = state.revealResults[0]?.word ?? "";
-  const pending = renderResultCard(word, state.path);
+  const path = state.path;
+  const order = participantOrder(path, state.players);
+  // Wait for the web fonts, or the canvas falls back to system fonts.
+  const pending = document.fonts.ready.then(() =>
+    renderResultCard(word, path, order),
+  );
   resultCard.pending = pending;
   pending
     .then((blob) => {
@@ -801,18 +885,18 @@ function prepareResultCard() {
 
 const CARD_WIDTH = 1080;
 const CARD_HEIGHT = 1350;
-const CARD_FONT =
-  'system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif';
+const SERIF = '"Playfair Display", Georgia, serif';
+const MONO = '"DM Mono", ui-monospace, monospace';
+const SANS = 'Lato, system-ui, -apple-system, "Segoe UI", sans-serif';
 
-function cssColor(name: string, fallback: string): string {
-  const value = getComputedStyle(document.documentElement)
-    .getPropertyValue(name)
-    .trim();
-  return value || fallback;
-}
-
-function setFont(ctx: CanvasRenderingContext2D, size: number, weight = 400) {
-  ctx.font = `${weight} ${size}px ${CARD_FONT}`;
+function setFont(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  family: string,
+  weight = 400,
+  style = "normal",
+) {
+  ctx.font = `${style} ${weight} ${size}px ${family}`;
 }
 
 // Largest size up to `max` at which `text` fits in `maxWidth`.
@@ -822,13 +906,14 @@ function fitFont(
   maxWidth: number,
   max: number,
   min: number,
+  family: string,
   weight: number,
 ): number {
   let size = max;
-  setFont(ctx, size, weight);
+  setFont(ctx, size, family, weight);
   while (size > min && ctx.measureText(text).width > maxWidth) {
     size -= 2;
-    setFont(ctx, size, weight);
+    setFont(ctx, size, family, weight);
   }
   return size;
 }
@@ -846,96 +931,257 @@ function ellipsize(
   return `${cut.trimEnd()}…`;
 }
 
-function renderResultCard(word: string, path: RoundResult[]): Promise<Blob> {
+// "Melded in round 7" -> "M E L D E D   I N   R O U N D   7", like the
+// manual's spaced labels.
+function letterSpace(text: string): string {
+  return text
+    .toUpperCase()
+    .split(" ")
+    .map((word) => word.split("").join(" "))
+    .join("   ");
+}
+
+// Greedily packs whole units onto lines no wider than `maxWidth`, never
+// splitting a unit. Returns undefined if it needs more than `maxLines`,
+// unless `truncate` is set, in which case the last line ends in "…".
+function packLines(
+  ctx: CanvasRenderingContext2D,
+  units: string[],
+  sep: string,
+  maxWidth: number,
+  maxLines: number,
+  truncate: boolean,
+): string[] | undefined {
+  const fitted = units.map((u) => ellipsize(ctx, u, maxWidth));
+  const lines: string[] = [];
+  let line = "";
+  for (const unit of fitted) {
+    const candidate = line ? `${line}${sep}${unit}` : unit;
+    if (!line || ctx.measureText(candidate).width <= maxWidth) {
+      line = candidate;
+    } else {
+      lines.push(line);
+      line = unit;
+    }
+  }
+  if (line) lines.push(line);
+  if (lines.length <= maxLines) return lines;
+  if (!truncate) return undefined;
+  const kept = lines.slice(0, maxLines);
+  const rest = lines.slice(maxLines - 1).join(sep);
+  kept[maxLines - 1] = ellipsize(ctx, rest, maxWidth);
+  return kept;
+}
+
+const PATH_SEP = "  ·  ";
+const PATH_MAX_SIZE = 34;
+const PATH_MIN_SIZE = 24;
+const ROW_PAD = 12;
+const ROW_GAP = 6;
+const MARKER_HEIGHT = 64;
+
+type CardRow =
+  | { kind: "round"; round: number; lines: string[] }
+  | { kind: "more"; count: number };
+
+function rowHeight(row: CardRow, size: number): number {
+  const lines = row.kind === "round" ? row.lines.length : 1;
+  return lines * Math.round(size * 1.3) + ROW_PAD;
+}
+
+function rowsHeight(rows: CardRow[], size: number): number {
+  return rows.reduce((sum, row) => sum + rowHeight(row, size) + ROW_GAP, 0);
+}
+
+// One font size for the whole list: the largest that fits every round on at
+// most two lines. Larger text wins over single lines, since the image is
+// usually seen shrunk to phone width. Only at the smallest size do rounds get
+// truncated or the middle of the path collapse into "+K more rounds".
+function layoutPath(
+  ctx: CanvasRenderingContext2D,
+  rounds: { round: number; words: string[] }[],
+  maxWidth: number,
+  budget: number,
+): { size: number; rows: CardRow[] } {
+  const pack = (size: number, truncate: boolean): CardRow[] | undefined => {
+    setFont(ctx, size, SANS, 400);
+    const rows: CardRow[] = [];
+    for (const r of rounds) {
+      const lines = packLines(ctx, r.words, PATH_SEP, maxWidth, 2, truncate);
+      if (!lines) return undefined;
+      rows.push({ kind: "round", round: r.round, lines });
+    }
+    return rows;
+  };
+  for (let size = PATH_MAX_SIZE; size > PATH_MIN_SIZE; size -= 2) {
+    const rows = pack(size, false);
+    if (rows && rowsHeight(rows, size) <= budget) return { size, rows };
+  }
+  const size = PATH_MIN_SIZE;
+  const rows = pack(size, true) ?? [];
+  if (rowsHeight(rows, size) <= budget || rows.length <= 3) {
+    return { size, rows };
+  }
+  // Keep the first rounds and the last two before the match; hide the
+  // fewest middle rounds that makes it fit.
+  for (let hidden = 1; hidden <= rows.length - 2; hidden++) {
+    const head = rows.slice(0, rows.length - 2 - hidden);
+    const collapsed: CardRow[] = [
+      ...head,
+      { kind: "more", count: hidden },
+      ...rows.slice(-2),
+    ];
+    if (rowsHeight(collapsed, size) <= budget) return { size, rows: collapsed };
+  }
+  return {
+    size,
+    rows: [{ kind: "more", count: rows.length - 2 }, ...rows.slice(-2)],
+  };
+}
+
+// Always the light palette, so the image looks the same whatever theme the
+// sharer uses.
+function renderResultCard(
+  word: string,
+  path: RoundResult[],
+  order: Participant[],
+): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = CARD_WIDTH;
   canvas.height = CARD_HEIGHT;
   const ctx = canvas.getContext("2d");
   if (!ctx) return Promise.reject(new Error("no canvas"));
 
-  const bg = cssColor("--bg", "#faf8f4");
-  const ink = cssColor("--ink", "#1c1a17");
-  const muted = cssColor("--muted", "#8a8579");
-  const line = cssColor("--line", "#e5e1d8");
+  const ink = "#1a1410";
+  const body = "#3a3229";
+  const paper = "#f5f0e8";
+  const cream = "#ede8dc";
+  const rust = "#c1440e";
+  const gold = "#b8922a";
+  const muted = "#6b6155";
+  const faded = "rgba(245,240,232,0.6)";
   const pad = 96;
   const contentWidth = CARD_WIDTH - pad * 2;
   const center = CARD_WIDTH / 2;
+  const band = 560;
 
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+  // Dark header band, like a printed manual's cover.
+  ctx.fillStyle = ink;
+  ctx.fillRect(0, 0, CARD_WIDTH, band);
+  ctx.fillStyle = paper;
+  ctx.fillRect(0, band, CARD_WIDTH, CARD_HEIGHT - band);
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
 
-  ctx.fillStyle = ink;
-  setFont(ctx, 56, 600);
-  ctx.fillText("Mind Meld", center, 170);
+  ctx.fillStyle = gold;
+  setFont(ctx, 28, MONO, 500);
+  ctx.fillText("M I N D   M E L D", center, 140);
 
-  ctx.fillStyle = muted;
-  setFont(ctx, 40);
-  ctx.fillText("We melded minds on", center, 330);
+  ctx.fillStyle = faded;
+  setFont(ctx, 40, SERIF, 400, "italic");
+  ctx.fillText("We melded minds on", center, 250);
 
-  ctx.fillStyle = ink;
-  fitFont(ctx, word, contentWidth, 160, 48, 700);
-  ctx.fillText(ellipsize(ctx, word, contentWidth), center, 500);
+  ctx.fillStyle = paper;
+  fitFont(ctx, word, contentWidth, 150, 48, SERIF, 700);
+  ctx.fillText(ellipsize(ctx, word, contentWidth), center, 400);
+
+  // The names double as the key: every round below lists words in this order.
+  const rounds = `${path.length} round${path.length === 1 ? "" : "s"}`;
+  const units = [rounds, ...order.map((p) => p.label)];
+  ctx.fillStyle = faded;
+  setFont(ctx, 32, SANS, 400);
+  const oneLine = packLines(ctx, units, " · ", contentWidth, 1, false);
+  if (oneLine) {
+    ctx.fillText(oneLine[0], center, 480);
+  } else {
+    setFont(ctx, 30, SANS, 400);
+    const lines = packLines(ctx, units, " · ", contentWidth, 2, true) ?? [];
+    lines.forEach((line, i) => {
+      ctx.fillText(line, center, 462 + i * 42);
+    });
+  }
 
   const last = path[path.length - 1];
-  const names = last ? last.words.map((w) => w.label).join(", ") : "";
-  const rounds = `${path.length} round${path.length === 1 ? "" : "s"}`;
-  ctx.fillStyle = muted;
-  setFont(ctx, 36);
-  ctx.fillText(
-    ellipsize(ctx, names ? `${rounds} · ${names}` : rounds, contentWidth),
-    center,
-    585,
-  );
+  const drawMarker = (text: string, y: number, centered: boolean) => {
+    ctx.fillStyle = cream;
+    ctx.fillRect(pad, y, contentWidth, MARKER_HEIGHT);
+    ctx.fillStyle = gold;
+    ctx.fillRect(pad, y, 6, MARKER_HEIGHT);
+    ctx.fillStyle = rust;
+    setFont(ctx, 26, MONO, 500);
+    ctx.textBaseline = "middle";
+    ctx.textAlign = centered ? "center" : "left";
+    ctx.fillText(text, centered ? center : pad + 32, y + MARKER_HEIGHT / 2);
+    ctx.textBaseline = "alphabetic";
+  };
 
-  ctx.strokeStyle = line;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(pad, 650);
-  ctx.lineTo(CARD_WIDTH - pad, 650);
-  ctx.stroke();
+  const bottom = CARD_HEIGHT - 135;
+  if (path.length <= 1) {
+    // Matched on the first round: no path to show.
+    drawMarker(
+      letterSpace("First try"),
+      (band + bottom - MARKER_HEIGHT) / 2,
+      true,
+    );
+  } else {
+    ctx.fillStyle = rust;
+    setFont(ctx, 26, MONO, 500);
+    ctx.textAlign = "center";
+    ctx.fillText("T H E   P A T H", center, band + 80);
 
-  // Fit the path between the divider and the footer: shrink the text first,
-  // and only collapse middle rounds if even the smallest size won't fit.
-  const top = 730;
-  const bottom = CARD_HEIGHT - 170;
-  const lineHeight = 1.6;
-  const minSize = 28;
-  const size = Math.max(
-    minSize,
-    Math.min(44, Math.floor((bottom - top) / (path.length * lineHeight))),
-  );
-  const maxRows = Math.max(1, Math.floor((bottom - top) / (size * lineHeight)));
-  type Row = { text: string; matched: boolean };
-  const toRow = (r: RoundResult): Row => ({
-    text: `${r.round}.  ${r.words.map((w) => w.word).join(" · ")}`,
-    matched: r.matched,
-  });
-  let rows: Row[] = path.map(toRow);
-  if (rows.length > maxRows) {
-    const head = rows.slice(0, maxRows - 2);
-    const hidden = rows.length - head.length - 1;
-    rows = [
-      ...head,
-      {
-        text: `+${hidden} more round${hidden === 1 ? "" : "s"}`,
-        matched: false,
-      },
-      rows[rows.length - 1],
-    ];
+    const top = band + 115;
+    const textX = pad + 100;
+    const textWidth = contentWidth - 140;
+    const before = path
+      .filter((r) => !r.matched)
+      .map((r) => ({
+        round: r.round,
+        words: orderedWords(r, order).map((w) => w.word),
+      }));
+    const { size, rows } = layoutPath(
+      ctx,
+      before,
+      textWidth,
+      bottom - top - MARKER_HEIGHT,
+    );
+    const lineHeight = Math.round(size * 1.3);
+    let y = top;
+    ctx.textAlign = "left";
+    for (const row of rows) {
+      // First baseline sits ROW_PAD/2 below the row top, plus one line's ascent.
+      const baseline = y + ROW_PAD / 2 + size;
+      if (row.kind === "round") {
+        ctx.fillStyle = muted;
+        setFont(ctx, Math.round(size * 0.8), MONO, 400);
+        ctx.fillText(String(row.round), pad + 32, baseline);
+        ctx.fillStyle = body;
+        setFont(ctx, size, SANS, 400);
+        row.lines.forEach((line, i) => {
+          ctx.fillText(line, textX, baseline + i * lineHeight);
+        });
+      } else {
+        ctx.fillStyle = muted;
+        setFont(ctx, size, SERIF, 400, "italic");
+        ctx.fillText(
+          `+${row.count} more round${row.count === 1 ? "" : "s"}`,
+          textX,
+          baseline,
+        );
+      }
+      y += rowHeight(row, size) + ROW_GAP;
+    }
+    drawMarker(
+      letterSpace(`Melded in round ${last?.round ?? path.length}`),
+      y,
+      false,
+    );
   }
-  let y = top + size;
-  for (const row of rows) {
-    ctx.fillStyle = row.matched ? ink : muted;
-    setFont(ctx, size, row.matched ? 600 : 400);
-    ctx.fillText(ellipsize(ctx, row.text, contentWidth), center, y);
-    y += size * lineHeight;
-  }
 
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
   ctx.fillStyle = muted;
-  setFont(ctx, 32);
-  ctx.fillText("mindmeld-game.com", center, CARD_HEIGHT - 90);
+  setFont(ctx, 30, SERIF, 400, "italic");
+  ctx.fillText("mindmeld-game.com", center, CARD_HEIGHT - 80);
 
   return new Promise((resolve, reject) => {
     canvas.toBlob(
