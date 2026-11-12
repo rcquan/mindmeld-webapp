@@ -411,7 +411,10 @@ function summaryLines(s: Summary): string[] {
 
 // --- report ----------------------------------------------------------------
 
-const cell = (text: string) => text.replace(/\|/g, "\\|").replace(/\n/g, " ");
+// Escapes backslashes first, so a word ending in "\" can't swallow the
+// escaping of a following "|".
+const cell = (text: string) =>
+  text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ");
 
 function gameMarkdown(g: Game): string {
   const out: string[] = [
