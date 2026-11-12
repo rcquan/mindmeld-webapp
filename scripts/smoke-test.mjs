@@ -141,6 +141,77 @@ async function playRound(a, b, wordA, wordB, expectMatch) {
   assert(ra.results.length === 2, "reveal includes both words");
 }
 
+// One human plus a bot. CI has no ANTHROPIC_API_KEY, so the bot plays the
+// built-in fallback words after its think delay (Stubborn One: 1.5–4s).
+async function runBotGame() {
+  const BOT_TIMEOUT_MS = 15_000;
+  const room = await createRoom();
+  const h = connect(room, "smoke-human", "Hana");
+  await waitFor(h, "joined");
+
+  send(h, { type: "add-bot", persona: "not-a-persona" });
+  send(h, { type: "add-bot", persona: "stubborn" });
+  const added = await waitFor(h, "players-update", (m) =>
+    m.players.some((p) => p.bot),
+  );
+  assert(added.players.length === 2, "only the valid persona adds a bot");
+  const bot = added.players.find((p) => p.bot);
+  assert(bot.bot.persona === "stubborn", "bot has its persona");
+  step("bot added");
+
+  // Three bots is the cap (MAX_BOTS): the fourth add is ignored, so removing
+  // the two extras brings the room back to 2 players, not 3.
+  send(h, { type: "add-bot", persona: "categorizer" });
+  send(h, { type: "add-bot", persona: "wildcard" });
+  const capped = await waitFor(
+    h,
+    "players-update",
+    (m) => m.players.length === 4,
+  );
+  send(h, { type: "add-bot", persona: "follower" });
+  for (const extra of capped.players.filter((p) => p.bot && p.id !== bot.id)) {
+    send(h, { type: "remove-bot", playerId: extra.id });
+  }
+  await waitFor(h, "players-update", (m) => m.players.length === 2);
+  step("bots capped at 3 and removed");
+
+  // Only the host (earliest-joined human) manages bots, and nobody can
+  // connect with a bot's id.
+  const g = connect(room, "smoke-guest", "Gus");
+  await waitFor(g, "joined");
+  await waitFor(h, "players-update", (m) => m.players.length === 3);
+  send(g, { type: "add-bot", persona: "wildcard" });
+  send(g, { type: "remove-bot", playerId: bot.id });
+  // A socket using the bot's id: its messages are ignored, and closing it
+  // doesn't mark the bot disconnected.
+  const impostor = connect(room, bot.id, "Impostor", { maxRetries: 0 });
+  await new Promise((r) => impostor.addEventListener("open", r));
+  send(impostor, { type: "set-label", label: "Hijacked" });
+  impostor.close();
+  g.close();
+  const afterGuest = await waitFor(h, "players-update", (m) =>
+    m.players.some((p) => p.id === "smoke-guest" && !p.connected),
+  );
+  const botNow = afterGuest.players.find((p) => p.id === bot.id);
+  assert(botNow.connected, "bot is still connected after the impostor left");
+  assert(botNow.label !== "Hijacked", "impostor couldn't rename the bot");
+  assert(
+    !h.queue.some((m) => m.type === "players-update" && m.players.length !== 3),
+    "guest's add-bot and remove-bot were ignored",
+  );
+  step("only the host manages bots; bot ids are ignored");
+
+  send(h, { type: "start-game" });
+  await waitFor(h, "round-start");
+  send(h, { type: "submit-word", word: "zebra" });
+  const reveal = await waitFor(h, "round-revealed", () => true, BOT_TIMEOUT_MS);
+  assert(reveal.results.length === 2, "reveal includes the bot's word");
+  const botWord = reveal.results.find((r) => r.playerId === bot.id)?.word;
+  assert(botWord && botWord !== "zebra", "bot submitted a word");
+  step(`bot played "${botWord}"`);
+  h.close();
+}
+
 async function run() {
   const room = await createRoom();
   step(`created room ${room}`);
@@ -183,6 +254,8 @@ async function run() {
   const lateErr = await waitFor(late, "error");
   assert(lateErr.code === "already-started", "late joiner is rejected");
   step("late joiner gets already-started");
+
+  await runBotGame();
 
   const ghost = connect("000000", "smoke-ghost", "Ghost", { maxRetries: 0 });
   const ghostErr = await waitFor(ghost, "error");
