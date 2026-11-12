@@ -6,7 +6,7 @@ import {
   Server,
   type WSMessage,
 } from "partyserver";
-import { BOT_PERSONAS, chooseBotWord } from "./bots";
+import { BOT_PERSONAS, chooseBotWord, fallbackWord } from "./bots";
 import {
   type ClientMessage,
   isBotPersonaId,
@@ -39,6 +39,13 @@ interface PersistedState {
   roundHistory: RoundResult[];
   resetAt?: number;
   readyIds?: string[];
+}
+
+// Server-created bot ids. Clients choose their own connection ids, so any
+// connection with this prefix is someone posing as a bot.
+const BOT_ID_PREFIX = "bot-";
+function isBotId(id: string): boolean {
+  return id.startsWith(BOT_ID_PREFIX);
 }
 
 type Env = {
@@ -169,10 +176,24 @@ export class MindMeld extends Server<Env> {
       .every((p) => this.readyIds.includes(p.id));
   }
 
+  // The earliest-joined human. Only the host manages bots, since bots cost
+  // API calls; if the host leaves for good, the next human takes over.
+  hostId(): string | undefined {
+    return [...this.players.values()]
+      .filter((p) => !p.bot)
+      .sort((a, b) => a.joinedAt - b.joinedAt)[0]?.id;
+  }
+
   botClient(): Anthropic | undefined {
     const apiKey = this.env.ANTHROPIC_API_KEY;
     if (!apiKey) return undefined;
-    this.anthropic ??= new Anthropic({ apiKey });
+    // SDK defaults are a 10-minute timeout with 2 retries, which would hold a
+    // round open for up to half an hour; a bot that slow should fall back.
+    this.anthropic ??= new Anthropic({
+      apiKey,
+      timeout: 15_000,
+      maxRetries: 1,
+    });
     return this.anthropic;
   }
 
@@ -277,6 +298,15 @@ export class MindMeld extends Server<Env> {
       return;
     }
 
+    // Bot ids are public (players-update lists them) and connection ids are
+    // client-chosen, so anyone could connect as a bot. Closing here is best
+    // effort (wrangler dev keeps the socket open), so onMessage and onClose
+    // also ignore these ids.
+    if (isBotId(connection.id)) {
+      connection.close(4003, "reserved-id");
+      return;
+    }
+
     const existing = this.players.get(connection.id);
     if (existing) {
       // Same stable client identity reconnecting (PartySocket sends the same
@@ -351,6 +381,8 @@ export class MindMeld extends Server<Env> {
   }
 
   async onClose(connection: Connection) {
+    // A socket that claimed a bot's id must not mark the bot disconnected.
+    if (isBotId(connection.id)) return;
     const player = this.players.get(connection.id);
     if (!player) return;
     // If our own bookkeeping shows a *different* connection object as the
@@ -469,6 +501,7 @@ export class MindMeld extends Server<Env> {
 
   async onMessage(sender: Connection, message: WSMessage) {
     if (typeof message !== "string") return;
+    if (isBotId(sender.id)) return;
 
     let parsed: ClientMessage;
     try {
@@ -480,7 +513,7 @@ export class MindMeld extends Server<Env> {
     switch (parsed.type) {
       case "set-label": {
         const player = this.players.get(sender.id);
-        if (!player || this.status !== "lobby") return;
+        if (!player || player.bot || this.status !== "lobby") return;
         if (typeof parsed.label !== "string") return;
         const label = parsed.label.trim().slice(0, MAX_LABEL_LENGTH);
         if (!label) return;
@@ -509,7 +542,8 @@ export class MindMeld extends Server<Env> {
         break;
       }
       case "submit-word": {
-        if (!this.players.has(sender.id)) return;
+        const player = this.players.get(sender.id);
+        if (!player || player.bot) return;
         if (typeof parsed.word !== "string") return;
         const rejected = await this.acceptSubmission(sender.id, parsed.word);
         if (rejected) {
@@ -518,8 +552,7 @@ export class MindMeld extends Server<Env> {
         break;
       }
       case "add-bot": {
-        const host = this.players.get(sender.id);
-        if (!host || host.bot || this.status !== "lobby") return;
+        if (sender.id !== this.hostId() || this.status !== "lobby") return;
         if (!isBotPersonaId(parsed.persona)) return;
         if (this.players.size >= MAX_PLAYERS) return;
         if (this.bots().length >= MAX_BOTS) return;
@@ -529,7 +562,7 @@ export class MindMeld extends Server<Env> {
         let label = base;
         for (let n = 2; taken.has(label); n++) label = `${base} ${n}`;
         const bot: Player = {
-          id: `bot-${crypto.randomUUID()}`,
+          id: `${BOT_ID_PREFIX}${crypto.randomUUID()}`,
           label,
           joinedAt: Date.now(),
           connected: true,
@@ -545,8 +578,7 @@ export class MindMeld extends Server<Env> {
         break;
       }
       case "remove-bot": {
-        const host = this.players.get(sender.id);
-        if (!host || host.bot || this.status !== "lobby") return;
+        if (sender.id !== this.hostId() || this.status !== "lobby") return;
         const bot = this.players.get(parsed.playerId);
         if (!bot?.bot) return;
         this.players.delete(bot.id);
@@ -643,45 +675,66 @@ export class MindMeld extends Server<Env> {
           const started = Date.now();
           const [min, max] = persona.knobs.thinkMs;
           const thinkMs = min + Math.random() * (max - min);
-          const choice = await chooseBotWord(client, persona, {
+          const context = () => ({
             round,
             history: [...this.roundHistory],
             selfId: bot.id,
             usedWords: this.usedWords(),
           });
+          const choice = await chooseBotWord(client, persona, context());
           const wait = thinkMs - (Date.now() - started);
           if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-          if (
-            this.status !== "round-active" ||
-            this.currentRound !== round ||
-            !this.players.has(bot.id) ||
-            this.submissions.has(bot.id)
-          ) {
-            return;
-          }
-          let rejected = await this.acceptSubmission(bot.id, choice.word);
-          // Another player may have taken the word since the bot chose it.
+          if (!this.botTurnOpen(round, bot.id)) return;
+          const rejected = await this.acceptSubmission(bot.id, choice.word);
+          // chooseBotWord already avoids used and over-long words, so this
+          // is a last resort: an unused fallback word is always accepted.
           if (rejected) {
-            rejected = await this.acceptSubmission(
-              bot.id,
-              (
-                await chooseBotWord(undefined, persona, {
-                  round,
-                  history: [...this.roundHistory],
-                  selfId: bot.id,
-                  usedWords: this.usedWords(),
-                })
-              ).word,
-            );
+            console.warn(`bot ${bot.label}: ${rejected}`);
+            await this.acceptSubmission(bot.id, fallbackWord(context()));
           }
-          if (rejected) console.warn(`bot ${bot.label}: ${rejected}`);
         } catch (err) {
           console.error(`bot ${bot.label} failed`, err);
+          await this.recoverBotTurn(round, bot).catch((e) =>
+            console.error(`bot ${bot.label} recovery failed`, e),
+          );
         } finally {
           this.botTurns.delete(key);
         }
       }),
     );
+  }
+
+  // Whether `botId` still owes a word for `round`.
+  botTurnOpen(round: number, botId: string): boolean {
+    return (
+      this.status === "round-active" &&
+      this.currentRound === round &&
+      this.players.has(botId) &&
+      !this.submissions.has(botId)
+    );
+  }
+
+  // A bot's turn failed. Never leave the round waiting on it: submit a
+  // fallback word, or, if its word was recorded but the reveal didn't run
+  // (persist threw midway), run the reveal now.
+  async recoverBotTurn(round: number, bot: Player) {
+    if (this.botTurnOpen(round, bot.id)) {
+      await this.acceptSubmission(
+        bot.id,
+        fallbackWord({
+          round,
+          history: [...this.roundHistory],
+          selfId: bot.id,
+          usedWords: this.usedWords(),
+        }),
+      );
+    } else if (
+      this.status === "round-active" &&
+      this.currentRound === round &&
+      this.submissions.size === this.connectedCount()
+    ) {
+      await this.revealRound();
+    }
   }
 
   async revealRound() {

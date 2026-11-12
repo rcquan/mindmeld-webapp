@@ -214,27 +214,36 @@ export function preferredMoves(persona: BotPersona): Move[] {
   return top >= 3 ? MOVES.filter((m) => w[m] === top) : [];
 }
 
-// Groups last round's words by a loose key (case and a plural "s" ignored)
-// and returns the biggest group, so "landscaping" and "Landscaping" or
-// "star" and "stars" count as players nearly agreeing.
+// Whether two words are the same up to case and a plural ending, using the
+// same rules as nearVariant plus plain "-s"/"-es" ("bus"/"buses").
+function sameWordish(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  if (x === y) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return (
+    nearVariant(x) === y ||
+    nearVariant(y) === x ||
+    long === `${short}s` ||
+    long === `${short}es`
+  );
+}
+
+// Groups last round's words that are the same up to case and plural, and
+// returns the biggest group, so "landscaping" and "Landscaping" or "star"
+// and "stars" count as players nearly agreeing.
 export function closestGroup(
   ctx: BotContext,
 ): { word: string; count: number } | undefined {
   const last = ctx.history[ctx.history.length - 1];
   if (!last) return undefined;
-  const groups = new Map<string, { word: string; count: number }>();
+  const groups: { word: string; count: number }[] = [];
   for (const w of last.words) {
-    const key = w.word
-      .trim()
-      .toLowerCase()
-      .replace(/(ch|sh|x|z|ss)es$/, "$1")
-      .replace(/ies$/, "y")
-      .replace(/s$/, "");
-    const g = groups.get(key) ?? { word: w.word, count: 0 };
-    g.count++;
-    groups.set(key, g);
+    const g = groups.find((g) => sameWordish(g.word, w.word));
+    if (g) g.count++;
+    else groups.push({ word: w.word, count: 1 });
   }
-  return [...groups.values()].sort((a, b) => b.count - a.count)[0];
+  return groups.sort((a, b) => b.count - a.count)[0];
 }
 
 // How far a long game has worn the persona down, 0 … 1. Real players get

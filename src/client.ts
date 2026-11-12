@@ -209,6 +209,11 @@ function render() {
   if (state.screen === "lobby") {
     roomCodeBtn.textContent = state.roomCode;
     playerList.innerHTML = "";
+    // Same rule as the server's hostId(): the earliest-joined human.
+    const hostId = state.players
+      .filter((p) => !p.bot)
+      .sort((a, b) => a.joinedAt - b.joinedAt)[0]?.id;
+    const isHost = hostId !== undefined && hostId === state.you?.id;
     for (const player of state.players) {
       const li = document.createElement("li");
       const name = document.createElement("span");
@@ -232,7 +237,8 @@ function render() {
             JSON.stringify({ type: "remove-bot", playerId: player.id }),
           );
         });
-        li.append(tag, remove);
+        li.append(tag);
+        if (isHost) li.append(remove);
       }
       li.classList.toggle("player-disconnected", !player.connected);
       playerList.appendChild(li);
@@ -240,8 +246,8 @@ function render() {
     const count = state.players.length;
     const full = count >= MAX_PLAYERS;
     const botsFull = state.players.filter((p) => p.bot).length >= MAX_BOTS;
-    addBotForm.hidden = full || botsFull;
-    botHint.hidden = full || botsFull;
+    addBotForm.hidden = full || botsFull || !isHost;
+    botHint.hidden = full || botsFull || !isHost;
     const alone = count < MIN_PLAYERS;
     lobbyStatus.textContent = alone
       ? `Waiting for players (${count}/${MAX_PLAYERS})…`

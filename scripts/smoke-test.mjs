@@ -175,6 +175,32 @@ async function runBotGame() {
   await waitFor(h, "players-update", (m) => m.players.length === 2);
   step("bots capped at 3 and removed");
 
+  // Only the host (earliest-joined human) manages bots, and nobody can
+  // connect with a bot's id.
+  const g = connect(room, "smoke-guest", "Gus");
+  await waitFor(g, "joined");
+  await waitFor(h, "players-update", (m) => m.players.length === 3);
+  send(g, { type: "add-bot", persona: "wildcard" });
+  send(g, { type: "remove-bot", playerId: bot.id });
+  // A socket using the bot's id: its messages are ignored, and closing it
+  // doesn't mark the bot disconnected.
+  const impostor = connect(room, bot.id, "Impostor", { maxRetries: 0 });
+  await new Promise((r) => impostor.addEventListener("open", r));
+  send(impostor, { type: "set-label", label: "Hijacked" });
+  impostor.close();
+  g.close();
+  const afterGuest = await waitFor(h, "players-update", (m) =>
+    m.players.some((p) => p.id === "smoke-guest" && !p.connected),
+  );
+  const botNow = afterGuest.players.find((p) => p.id === bot.id);
+  assert(botNow.connected, "bot is still connected after the impostor left");
+  assert(botNow.label !== "Hijacked", "impostor couldn't rename the bot");
+  assert(
+    !h.queue.some((m) => m.type === "players-update" && m.players.length !== 3),
+    "guest's add-bot and remove-bot were ignored",
+  );
+  step("only the host manages bots; bot ids are ignored");
+
   send(h, { type: "start-game" });
   await waitFor(h, "round-start");
   send(h, { type: "submit-word", word: "zebra" });
