@@ -147,11 +147,12 @@
         <p id="lobby-status" class="hint"></p>
 
         <form id="add-bot-form" class="add-bot">
-          <label for="bot-persona" class="sr-only">Bot personality</label>
-          <select id="bot-persona" class="text-input"></select>
+          <fieldset class="persona-picker">
+            <legend class="eyebrow">Add a bot player</legend>
+            <div id="bot-personas" class="persona-list"></div>
+          </fieldset>
           <button class="btn" type="submit">Add a bot</button>
         </form>
-        <p id="bot-hint" class="hint"></p>
 
         <button id="start-game" class="btn btn-primary" type="button" disabled>
           Start game

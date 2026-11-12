@@ -131,23 +131,31 @@ const playerList = el<HTMLUListElement>("player-list");
 const lobbyStatus = el<HTMLParagraphElement>("lobby-status");
 const startGameBtn = el<HTMLButtonElement>("start-game");
 const addBotForm = el<HTMLFormElement>("add-bot-form");
-const botPersonaSelect = el<HTMLSelectElement>("bot-persona");
-const botHint = el<HTMLParagraphElement>("bot-hint");
+const botPersonaList = el<HTMLDivElement>("bot-personas");
 
-for (const persona of BOT_PERSONA_OPTIONS) {
-  const option = document.createElement("option");
-  option.value = persona.id;
-  option.textContent = persona.label;
-  botPersonaSelect.appendChild(option);
-}
+BOT_PERSONA_OPTIONS.forEach((persona, i) => {
+  const label = document.createElement("label");
+  label.className = "persona";
+  const radio = document.createElement("input");
+  radio.type = "radio";
+  radio.name = "bot-persona";
+  radio.value = persona.id;
+  radio.checked = i === 0;
+  const name = document.createElement("span");
+  name.className = "persona-name";
+  name.textContent = persona.label;
+  const desc = document.createElement("span");
+  desc.className = "persona-desc";
+  desc.textContent = persona.description;
+  label.append(radio, name, desc);
+  botPersonaList.appendChild(label);
+});
 
-function renderBotHint() {
-  const persona = BOT_PERSONA_OPTIONS.find(
-    (p) => p.id === botPersonaSelect.value,
+function selectedPersonaId(): string {
+  return (
+    botPersonaList.querySelector<HTMLInputElement>("input:checked")?.value ?? ""
   );
-  botHint.textContent = persona?.description ?? "";
 }
-renderBotHint();
 
 const roundLabel = el<HTMLParagraphElement>("round-label");
 const roundPrompt = el<HTMLHeadingElement>("round-prompt");
@@ -218,8 +226,11 @@ function render() {
       const li = document.createElement("li");
       const name = document.createElement("span");
       name.className = "player-name";
-      name.textContent =
-        player.id === state.you?.id ? `${player.label} (you)` : player.label;
+      // The BOT tag already says it, so drop the "Bot" suffix here.
+      const shown = player.bot
+        ? player.label.replace(/ Bot\b/, "")
+        : player.label;
+      name.textContent = player.id === state.you?.id ? `${shown} (you)` : shown;
       if (!player.connected) name.textContent += " (reconnecting…)";
       li.appendChild(name);
       if (player.bot) {
@@ -247,7 +258,6 @@ function render() {
     const full = count >= MAX_PLAYERS;
     const botsFull = state.players.filter((p) => p.bot).length >= MAX_BOTS;
     addBotForm.hidden = full || botsFull || !isHost;
-    botHint.hidden = full || botsFull || !isHost;
     const alone = count < MIN_PLAYERS;
     lobbyStatus.textContent = alone
       ? `Waiting for players (${count}/${MAX_PLAYERS})…`
@@ -849,12 +859,10 @@ inviteBtn.addEventListener("click", async () => {
   }
 });
 
-botPersonaSelect.addEventListener("change", renderBotHint);
-
 addBotForm.addEventListener("submit", (event) => {
   event.preventDefault();
   socket?.send(
-    JSON.stringify({ type: "add-bot", persona: botPersonaSelect.value }),
+    JSON.stringify({ type: "add-bot", persona: selectedPersonaId() }),
   );
 });
 
