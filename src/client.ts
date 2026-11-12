@@ -2,6 +2,8 @@ import "./styles.css";
 
 import PartySocket from "partysocket";
 import {
+  BOT_PERSONA_OPTIONS,
+  MAX_BOTS,
   MAX_LABEL_LENGTH,
   MAX_PLAYERS,
   MIN_PLAYERS,
@@ -128,6 +130,24 @@ const inviteHint = el<HTMLParagraphElement>("invite-hint");
 const playerList = el<HTMLUListElement>("player-list");
 const lobbyStatus = el<HTMLParagraphElement>("lobby-status");
 const startGameBtn = el<HTMLButtonElement>("start-game");
+const addBotForm = el<HTMLFormElement>("add-bot-form");
+const botPersonaSelect = el<HTMLSelectElement>("bot-persona");
+const botHint = el<HTMLParagraphElement>("bot-hint");
+
+for (const persona of BOT_PERSONA_OPTIONS) {
+  const option = document.createElement("option");
+  option.value = persona.id;
+  option.textContent = persona.label;
+  botPersonaSelect.appendChild(option);
+}
+
+function renderBotHint() {
+  const persona = BOT_PERSONA_OPTIONS.find(
+    (p) => p.id === botPersonaSelect.value,
+  );
+  botHint.textContent = persona?.description ?? "";
+}
+renderBotHint();
 
 const roundLabel = el<HTMLParagraphElement>("round-label");
 const roundPrompt = el<HTMLHeadingElement>("round-prompt");
@@ -191,13 +211,37 @@ function render() {
     playerList.innerHTML = "";
     for (const player of state.players) {
       const li = document.createElement("li");
-      li.textContent =
+      const name = document.createElement("span");
+      name.className = "player-name";
+      name.textContent =
         player.id === state.you?.id ? `${player.label} (you)` : player.label;
-      if (!player.connected) li.textContent += " (reconnecting…)";
+      if (!player.connected) name.textContent += " (reconnecting…)";
+      li.appendChild(name);
+      if (player.bot) {
+        li.classList.add("player-bot");
+        const tag = document.createElement("span");
+        tag.className = "bot-tag";
+        tag.textContent = "bot";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "remove-bot";
+        remove.textContent = "×";
+        remove.setAttribute("aria-label", `Remove ${player.label}`);
+        remove.addEventListener("click", () => {
+          socket?.send(
+            JSON.stringify({ type: "remove-bot", playerId: player.id }),
+          );
+        });
+        li.append(tag, remove);
+      }
       li.classList.toggle("player-disconnected", !player.connected);
       playerList.appendChild(li);
     }
     const count = state.players.length;
+    const full = count >= MAX_PLAYERS;
+    const botsFull = state.players.filter((p) => p.bot).length >= MAX_BOTS;
+    addBotForm.hidden = full || botsFull;
+    botHint.hidden = full || botsFull;
     const alone = count < MIN_PLAYERS;
     lobbyStatus.textContent = alone
       ? `Waiting for players (${count}/${MAX_PLAYERS})…`
@@ -797,6 +841,15 @@ inviteBtn.addEventListener("click", async () => {
     if (err instanceof DOMException && err.name === "AbortError") return;
     await copyInvite(data);
   }
+});
+
+botPersonaSelect.addEventListener("change", renderBotHint);
+
+addBotForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  socket?.send(
+    JSON.stringify({ type: "add-bot", persona: botPersonaSelect.value }),
+  );
 });
 
 startGameBtn.addEventListener("click", () => {

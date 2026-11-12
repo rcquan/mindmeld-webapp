@@ -297,6 +297,63 @@ h2 {
   color: var(--ink);
 }
 
+.player-list li.player-bot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.player-bot .player-name {
+  flex: 1;
+}
+
+.bot-tag {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.05rem 0.4rem;
+}
+
+.remove-bot {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -0.6rem -0.75rem -0.6rem 0;
+  cursor: pointer;
+}
+
+.remove-bot:hover {
+  color: var(--accent);
+}
+
+.add-bot {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.add-bot[hidden],
+#bot-hint[hidden] {
+  display: none;
+}
+
+.add-bot select {
+  text-align: left;
+}
+
+.add-bot .btn {
+  flex: none;
+}
+
 .player-disconnected {
   opacity: 0.6;
   font-style: italic;

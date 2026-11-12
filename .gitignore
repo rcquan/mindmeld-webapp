@@ -5,3 +5,6 @@ dist
 *.tsbuildinfo
 .partykit
 .dev.vars
+
+# Bot simulation reports (scripts/simulate-bots.ts)
+sim-results/

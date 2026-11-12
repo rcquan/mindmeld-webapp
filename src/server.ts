@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import {
   type Connection,
   type ConnectionContext,
@@ -5,8 +6,12 @@ import {
   Server,
   type WSMessage,
 } from "partyserver";
+import { BOT_PERSONAS, chooseBotWord } from "./bots";
 import {
   type ClientMessage,
+  isBotPersonaId,
+  isMatch,
+  MAX_BOTS,
   MAX_LABEL_LENGTH,
   MAX_PLAYERS,
   MAX_WORD_LENGTH,
@@ -36,7 +41,11 @@ interface PersistedState {
   readyIds?: string[];
 }
 
-type Env = { Main: DurableObjectNamespace<MindMeld> };
+type Env = {
+  Main: DurableObjectNamespace<MindMeld>;
+  // Optional: without it, bots play words from a built-in list.
+  ANTHROPIC_API_KEY?: string;
+};
 
 export class MindMeld extends Server<Env> {
   // Must be static: PartyServer ignores an instance-level `options`.
@@ -59,6 +68,10 @@ export class MindMeld extends Server<Env> {
   // instance — acceptable, since it only affects the rare same-browser-two-tabs
   // case.
   liveConnections = new Map<string, Connection>();
+  // `${round}:${botId}` for bot turns running in this instance, so a wake in
+  // onStart doesn't double-run one that is still in flight.
+  botTurns = new Set<string>();
+  anthropic?: Anthropic;
 
   async onStart() {
     const saved = await this.ctx.storage.get<PersistedState>("state");
@@ -71,6 +84,11 @@ export class MindMeld extends Server<Env> {
     this.roundHistory = saved.roundHistory;
     this.resetAt = saved.resetAt;
     this.readyIds = saved.readyIds ?? [];
+    // A round's bot turns run in waitUntil promises, which don't survive the
+    // instance being evicted: restart any bot that hasn't submitted yet.
+    if (this.status === "round-active") {
+      this.ctx.waitUntil(this.runBots(this.currentRound));
+    }
   }
 
   async persist() {
@@ -130,14 +148,32 @@ export class MindMeld extends Server<Env> {
     return [...this.players.values()];
   }
 
+  // Bots count: they play rounds and count toward MIN_PLAYERS.
   connectedCount(): number {
     return [...this.players.values()].filter((p) => p.connected).length;
   }
 
+  // Bots have no socket, so a room is empty once its humans are gone.
+  humanConnectedCount(): number {
+    return [...this.players.values()].filter((p) => p.connected && !p.bot)
+      .length;
+  }
+
+  bots(): Player[] {
+    return [...this.players.values()].filter((p) => p.bot);
+  }
+
   allConnectedReady(): boolean {
     return [...this.players.values()]
-      .filter((p) => p.connected)
+      .filter((p) => p.connected && !p.bot)
       .every((p) => this.readyIds.includes(p.id));
+  }
+
+  botClient(): Anthropic | undefined {
+    const apiKey = this.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return undefined;
+    this.anthropic ??= new Anthropic({ apiKey });
+    return this.anthropic;
   }
 
   resultsClosing(): ResultsClosing | undefined {
@@ -160,7 +196,7 @@ export class MindMeld extends Server<Env> {
     ) {
       deadlines.push(this.resetAt);
     }
-    if (this.connectedCount() === 0) {
+    if (this.humanConnectedCount() === 0) {
       deadlines.push(Math.max(now, this.graceDeadline()));
     }
     if (deadlines.length > 0) {
@@ -344,7 +380,9 @@ export class MindMeld extends Server<Env> {
 
     const liveCount = this.connectedCount();
 
-    if (liveCount === 0) {
+    // Only bots left: keep the game for a reconnect, and let the grace
+    // period tear the room down otherwise.
+    if (this.humanConnectedCount() === 0) {
       await this.armAlarm();
       return;
     }
@@ -405,6 +443,7 @@ export class MindMeld extends Server<Env> {
     // reconnect; this alarm firing "late" against a live room is a no-op.
     let changed = false;
     for (const player of this.players.values()) {
+      if (player.bot) continue;
       const isLive = liveIds.has(player.id);
       if (player.connected !== isLive) {
         player.connected = isLive;
@@ -457,6 +496,7 @@ export class MindMeld extends Server<Env> {
       case "start-game": {
         if (this.status !== "lobby" || this.connectedCount() < MIN_PLAYERS)
           return;
+        if (this.humanConnectedCount() === 0) return;
         this.status = "round-active";
         this.currentRound = 1;
         this.submissions.clear();
@@ -465,41 +505,56 @@ export class MindMeld extends Server<Env> {
           type: "round-start",
           round: this.currentRound,
         });
+        this.ctx.waitUntil(this.runBots(this.currentRound));
         break;
       }
       case "submit-word": {
-        if (this.status !== "round-active") return;
         if (!this.players.has(sender.id)) return;
         if (typeof parsed.word !== "string") return;
-        const word = parsed.word.trim();
-        if (!word) return;
-        // The input's maxlength is client-side only. Without this, one huge
-        // word pushes the persisted state past the 128 KiB storage value
-        // limit and every later persist() fails, freezing the room.
-        if (word.length > MAX_WORD_LENGTH) {
-          this.send(sender, {
-            type: "word-rejected",
-            message: `Words can be at most ${MAX_WORD_LENGTH} characters.`,
-          });
-          return;
+        const rejected = await this.acceptSubmission(sender.id, parsed.word);
+        if (rejected) {
+          this.send(sender, { type: "word-rejected", message: rejected });
         }
-        if (this.usedWords().has(word.toLowerCase())) {
-          this.send(sender, {
-            type: "word-rejected",
-            message: `"${word}" was already used — try something new.`,
-          });
-          return;
-        }
-        this.submissions.set(sender.id, word);
+        break;
+      }
+      case "add-bot": {
+        const host = this.players.get(sender.id);
+        if (!host || host.bot || this.status !== "lobby") return;
+        if (!isBotPersonaId(parsed.persona)) return;
+        if (this.players.size >= MAX_PLAYERS) return;
+        if (this.bots().length >= MAX_BOTS) return;
+        const persona = BOT_PERSONAS[parsed.persona];
+        const base = `${persona.label.replace(/^The /, "")} Bot`;
+        const taken = new Set(this.bots().map((b) => b.label));
+        let label = base;
+        for (let n = 2; taken.has(label); n++) label = `${base} ${n}`;
+        const bot: Player = {
+          id: `bot-${crypto.randomUUID()}`,
+          label,
+          joinedAt: Date.now(),
+          connected: true,
+          named: true,
+          bot: { persona: persona.id },
+        };
+        this.players.set(bot.id, bot);
         await this.persist();
         this.broadcastMessage({
-          type: "submission-progress",
-          submittedCount: this.submissions.size,
-          totalCount: this.connectedCount(),
+          type: "players-update",
+          players: this.playersList(),
         });
-        if (this.submissions.size === this.connectedCount()) {
-          await this.revealRound();
-        }
+        break;
+      }
+      case "remove-bot": {
+        const host = this.players.get(sender.id);
+        if (!host || host.bot || this.status !== "lobby") return;
+        const bot = this.players.get(parsed.playerId);
+        if (!bot?.bot) return;
+        this.players.delete(bot.id);
+        await this.persist();
+        this.broadcastMessage({
+          type: "players-update",
+          players: this.playersList(),
+        });
         break;
       }
       case "next-round": {
@@ -514,6 +569,7 @@ export class MindMeld extends Server<Env> {
           type: "round-start",
           round: this.currentRound,
         });
+        this.ctx.waitUntil(this.runBots(this.currentRound));
         break;
       }
       case "play-again": {
@@ -540,13 +596,100 @@ export class MindMeld extends Server<Env> {
     }
   }
 
+  // Shared by human and bot submissions. Returns why the word was
+  // rejected, or undefined once it's accepted (or silently ignored).
+  async acceptSubmission(
+    playerId: string,
+    rawWord: string,
+  ): Promise<string | undefined> {
+    if (this.status !== "round-active") return;
+    if (!this.players.has(playerId)) return;
+    const word = rawWord.trim();
+    if (!word) return;
+    // The input's maxlength is client-side only. Without this, one huge
+    // word pushes the persisted state past the 128 KiB storage value
+    // limit and every later persist() fails, freezing the room.
+    if (word.length > MAX_WORD_LENGTH) {
+      return `Words can be at most ${MAX_WORD_LENGTH} characters.`;
+    }
+    if (this.usedWords().has(word.toLowerCase())) {
+      return `"${word}" was already used — try something new.`;
+    }
+    this.submissions.set(playerId, word);
+    await this.persist();
+    this.broadcastMessage({
+      type: "submission-progress",
+      submittedCount: this.submissions.size,
+      totalCount: this.connectedCount(),
+    });
+    if (this.submissions.size === this.connectedCount()) {
+      await this.revealRound();
+    }
+  }
+
+  // Plays every bot's turn for `round`, in parallel. Each bot waits out its
+  // think time, then re-checks the room, which may have moved on meanwhile.
+  async runBots(round: number) {
+    const client = this.botClient();
+    await Promise.all(
+      this.bots().map(async (bot) => {
+        const key = `${round}:${bot.id}`;
+        if (this.submissions.has(bot.id) || this.botTurns.has(key)) return;
+        const persona =
+          BOT_PERSONAS[bot.bot?.persona as keyof typeof BOT_PERSONAS];
+        if (!persona) return;
+        this.botTurns.add(key);
+        try {
+          const started = Date.now();
+          const [min, max] = persona.knobs.thinkMs;
+          const thinkMs = min + Math.random() * (max - min);
+          const choice = await chooseBotWord(client, persona, {
+            round,
+            history: [...this.roundHistory],
+            selfId: bot.id,
+            usedWords: this.usedWords(),
+          });
+          const wait = thinkMs - (Date.now() - started);
+          if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+          if (
+            this.status !== "round-active" ||
+            this.currentRound !== round ||
+            !this.players.has(bot.id) ||
+            this.submissions.has(bot.id)
+          ) {
+            return;
+          }
+          let rejected = await this.acceptSubmission(bot.id, choice.word);
+          // Another player may have taken the word since the bot chose it.
+          if (rejected) {
+            rejected = await this.acceptSubmission(
+              bot.id,
+              (
+                await chooseBotWord(undefined, persona, {
+                  round,
+                  history: [...this.roundHistory],
+                  selfId: bot.id,
+                  usedWords: this.usedWords(),
+                })
+              ).word,
+            );
+          }
+          if (rejected) console.warn(`bot ${bot.label}: ${rejected}`);
+        } catch (err) {
+          console.error(`bot ${bot.label} failed`, err);
+        } finally {
+          this.botTurns.delete(key);
+        }
+      }),
+    );
+  }
+
   async revealRound() {
     const results = [...this.submissions.entries()].map(([playerId, word]) => {
       const player = this.players.get(playerId);
       return { playerId, label: player?.label ?? "Player", word };
     });
-    const words = results.map((r) => r.word.toLowerCase());
-    const matched = words.length > 0 && words.every((w) => w === words[0]);
+    const matched = isMatch(results.map((r) => r.word));
 
     this.status = matched ? "matched" : "revealed";
     this.roundHistory.push({
