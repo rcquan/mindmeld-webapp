@@ -38,7 +38,7 @@ With no history, every bot would open with the same model-favorite word. Each bo
 A bot plays from a built-in word list (`fallbackWord`) instead of calling the model when:
 - there's no API key;
 - the call fails twice or errors;
-- the game is past `MAX_MODEL_ROUNDS` (20).
+- the game is past `MAX_MODEL_ROUNDS` (30).
 
 Round 1 fallback words differ per bot. Later rounds depend only on the previous words, so fallback bots agree with each other from round 2. That makes no-key dev and CI games end quickly, and it's also why fallback games say nothing about bot quality.
 
@@ -85,7 +85,7 @@ The candidate list also always includes "the word you think most of the table wi
 
 - At most `MAX_BOTS` (3) bots per room, enforced by the server.
 - Only the host (the earliest-joined human) can add or remove bots.
-- After round 20, bots play free fallback words.
+- After round 30, bots play free fallback words.
 - The API client times out after 15 seconds with one retry, then the bot falls back.
 
 The system prompt is cached. A typical call is about 1,050 cached input tokens, 275 uncached and 235 output.

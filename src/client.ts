@@ -130,32 +130,59 @@ const inviteHint = el<HTMLParagraphElement>("invite-hint");
 const playerList = el<HTMLUListElement>("player-list");
 const lobbyStatus = el<HTMLParagraphElement>("lobby-status");
 const startGameBtn = el<HTMLButtonElement>("start-game");
-const addBotForm = el<HTMLFormElement>("add-bot-form");
-const botPersonaList = el<HTMLDivElement>("bot-personas");
+const addBot = el<HTMLDivElement>("add-bot");
+const addBotToggle = el<HTMLButtonElement>("add-bot-toggle");
+const addBotCount = el<HTMLSpanElement>("add-bot-count");
+const botPanel = el<HTMLDivElement>("bot-panel");
+const botPanelClose = el<HTMLButtonElement>("bot-panel-close");
+const botPersonaList = el<HTMLUListElement>("bot-personas");
 
-BOT_PERSONA_OPTIONS.forEach((persona, i) => {
-  const label = document.createElement("label");
-  label.className = "persona";
-  const radio = document.createElement("input");
-  radio.type = "radio";
-  radio.name = "bot-persona";
-  radio.value = persona.id;
-  radio.checked = i === 0;
+// Each persona is one button: tapping it adds that bot. A mis-tap is cheap
+// to undo with the bot's remove control in the player list.
+for (const persona of BOT_PERSONA_OPTIONS) {
+  const item = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "persona";
+  button.dataset.persona = persona.id;
   const name = document.createElement("span");
   name.className = "persona-name";
   name.textContent = persona.label;
   const desc = document.createElement("span");
   desc.className = "persona-desc";
   desc.textContent = persona.description;
-  label.append(radio, name, desc);
-  botPersonaList.appendChild(label);
-});
-
-function selectedPersonaId(): string {
-  return (
-    botPersonaList.querySelector<HTMLInputElement>("input:checked")?.value ?? ""
-  );
+  button.append(name, desc);
+  item.appendChild(button);
+  botPersonaList.appendChild(item);
 }
+
+function setBotPanel(open: boolean, returnFocus = false) {
+  botPanel.hidden = !open;
+  addBotToggle.setAttribute("aria-expanded", String(open));
+  if (open) {
+    botPersonaList.querySelector<HTMLButtonElement>("button")?.focus();
+  } else if (returnFocus) {
+    addBotToggle.focus();
+  }
+}
+
+addBotToggle.addEventListener("click", () => setBotPanel(botPanel.hidden));
+botPanelClose.addEventListener("click", () => setBotPanel(false, true));
+addBot.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !botPanel.hidden) {
+    setBotPanel(false, true);
+  }
+});
+botPersonaList.addEventListener("click", (event) => {
+  const button = (event.target as Element).closest<HTMLButtonElement>(
+    "button[data-persona]",
+  );
+  if (!button) return;
+  socket?.send(
+    JSON.stringify({ type: "add-bot", persona: button.dataset.persona }),
+  );
+  setBotPanel(false, true);
+});
 
 const roundLabel = el<HTMLParagraphElement>("round-label");
 const roundPrompt = el<HTMLHeadingElement>("round-prompt");
@@ -256,8 +283,12 @@ function render() {
     }
     const count = state.players.length;
     const full = count >= MAX_PLAYERS;
-    const botsFull = state.players.filter((p) => p.bot).length >= MAX_BOTS;
-    addBotForm.hidden = full || botsFull || !isHost;
+    const botCount = state.players.filter((p) => p.bot).length;
+    const botsFull = botCount >= MAX_BOTS;
+    addBot.hidden = full || botsFull || !isHost;
+    if (addBot.hidden) setBotPanel(false);
+    addBotCount.textContent =
+      botCount > 0 ? `(${botCount} of ${MAX_BOTS})` : "";
     const alone = count < MIN_PLAYERS;
     lobbyStatus.textContent = alone
       ? `Waiting for players (${count}/${MAX_PLAYERS})…`
@@ -828,16 +859,21 @@ function inviteData(): ShareData {
   };
 }
 
-// Phones get the native share sheet (Messages first); browsers without the
-// Web Share API get a copy-to-clipboard button instead.
+// Phones get the native share sheet (Messages first). Desktop browsers with
+// the Web Share API hand the fields to OS share targets that reorder or merge
+// them (the whole message can become one link), so desktop copies a message
+// of our own to the clipboard instead.
 const canNativeShare =
   typeof navigator.share === "function" &&
+  matchMedia("(pointer: coarse)").matches &&
   navigator.canShare?.({ title: "x", text: "x", url: location.href }) !== false;
 
 async function copyInvite(data: ShareData) {
   try {
-    await navigator.clipboard.writeText(`${data.text} ${data.url}`);
-    inviteHint.textContent = "Link copied: paste it into a text";
+    // Text first, then the URL on its own line, so apps like Slack don't
+    // treat the whole message as one link.
+    await navigator.clipboard.writeText(`${data.text}.\n${data.url}`);
+    inviteHint.textContent = "Link copied: paste it into a message";
   } catch {
     inviteHint.textContent = `Share this code: ${state.roomCode}`;
   }
@@ -857,13 +893,6 @@ inviteBtn.addEventListener("click", async () => {
     if (err instanceof DOMException && err.name === "AbortError") return;
     await copyInvite(data);
   }
-});
-
-addBotForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  socket?.send(
-    JSON.stringify({ type: "add-bot", persona: selectedPersonaId() }),
-  );
 });
 
 startGameBtn.addEventListener("click", () => {
@@ -1169,27 +1198,40 @@ function renderResultCard(
   }
 
   const last = path[path.length - 1];
-  const drawMarker = (text: string, y: number, centered: boolean) => {
+  // The final row of the path: laid out like the rounds above it (number
+  // column, then the word), so the path reads 1, 2, ... N through the match.
+  const drawMarker = (y: number, label: string) => {
     ctx.fillStyle = cream;
     ctx.fillRect(pad, y, contentWidth, MARKER_HEIGHT);
     ctx.fillStyle = gold;
     ctx.fillRect(pad, y, 6, MARKER_HEIGHT);
-    ctx.fillStyle = rust;
-    setFont(ctx, 26, MONO, 500);
+    const mid = y + MARKER_HEIGHT / 2;
     ctx.textBaseline = "middle";
-    ctx.textAlign = centered ? "center" : "left";
-    ctx.fillText(text, centered ? center : pad + 32, y + MARKER_HEIGHT / 2);
+    ctx.textAlign = "left";
+    ctx.fillStyle = muted;
+    setFont(ctx, 21, MONO, 400);
+    ctx.fillText(String(last?.round ?? path.length), pad + 32, mid);
+
+    ctx.textAlign = "right";
+    ctx.fillStyle = rust;
+    setFont(ctx, 22, MONO, 500);
+    const labelText = letterSpace(label);
+    ctx.fillText(labelText, pad + contentWidth - 28, mid);
+    const labelWidth = ctx.measureText(labelText).width;
+
+    const textX = pad + 100;
+    const room = contentWidth - 100 - 28 - labelWidth - 24;
+    ctx.textAlign = "left";
+    ctx.fillStyle = rust;
+    fitFont(ctx, word, room, 34, 22, SANS, 700);
+    ctx.fillText(ellipsize(ctx, word, room), textX, mid);
     ctx.textBaseline = "alphabetic";
   };
 
   const bottom = CARD_HEIGHT - 135;
   if (path.length <= 1) {
     // Matched on the first round: no path to show.
-    drawMarker(
-      letterSpace("First try"),
-      (band + bottom - MARKER_HEIGHT) / 2,
-      true,
-    );
+    drawMarker((band + bottom - MARKER_HEIGHT) / 2, "First try");
   } else {
     ctx.fillStyle = rust;
     setFont(ctx, 26, MONO, 500);
@@ -1237,11 +1279,7 @@ function renderResultCard(
       }
       y += rowHeight(row, size) + ROW_GAP;
     }
-    drawMarker(
-      letterSpace(`Melded in round ${last?.round ?? path.length}`),
-      y,
-      false,
-    );
+    drawMarker(y, "Melded");
   }
 
   ctx.textAlign = "center";

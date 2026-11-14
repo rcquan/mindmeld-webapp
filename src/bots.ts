@@ -18,7 +18,7 @@ export const BOT_MODEL = "claude-sonnet-5-5";
 
 // After this many rounds a game's bots stop calling the model and play the
 // free fallback words, so a long or abandoned game can't run up the bill.
-export const MAX_MODEL_ROUNDS = 20;
+export const MAX_MODEL_ROUNDS = 30;
 
 // The kinds of move a player can make after round 1. "free" is round 1.
 export const MOVES = [

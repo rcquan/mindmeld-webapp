@@ -146,13 +146,31 @@
         <ul id="player-list" class="player-list"></ul>
         <p id="lobby-status" class="hint"></p>
 
-        <form id="add-bot-form" class="add-bot">
-          <fieldset class="persona-picker">
-            <legend class="eyebrow">Add a bot player</legend>
-            <div id="bot-personas" class="persona-list"></div>
-          </fieldset>
-          <button class="btn" type="submit">Add a bot</button>
-        </form>
+        <div id="add-bot" class="add-bot">
+          <button
+            id="add-bot-toggle"
+            class="btn"
+            type="button"
+            aria-expanded="false"
+            aria-controls="bot-panel"
+          >
+            Add a bot <span id="add-bot-count"></span>
+          </button>
+          <div id="bot-panel" class="bot-panel" hidden>
+            <div class="bot-panel-head">
+              <p class="eyebrow">Choose a bot</p>
+              <button
+                id="bot-panel-close"
+                class="bot-panel-close"
+                type="button"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <ul id="bot-personas" class="persona-list"></ul>
+          </div>
+        </div>
 
         <button id="start-game" class="btn btn-primary" type="button" disabled>
           Start game
