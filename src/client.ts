@@ -375,8 +375,9 @@ function render() {
   }
 
   if (state.screen === "matched") {
-    matchedWord.textContent = state.revealResults[0]?.word ?? "";
-    renderPathList();
+    const word = matchedWordOf();
+    matchedWord.textContent = word;
+    renderPathList(word);
     shareResultsBtn.hidden = !resultCard.file || !canShareFile(resultCard.file);
     copyImageBtn.hidden = !resultCard.blob || !canCopyImage;
     downloadResultsBtn.disabled = !resultCard.blob;
@@ -434,6 +435,22 @@ function orderedWords(round: RoundResult, order: Participant[]): RoundWord[] {
   return words;
 }
 
+const MARKER_LABELS = { first: "First try", melded: "Melded" } as const;
+
+function matchedWordOf(): string {
+  return state.revealResults[0]?.word ?? "";
+}
+
+// The last row of the path, shared by the results screen and the share card.
+function matchedMarker(path: RoundResult[], word: string) {
+  const last = path[path.length - 1];
+  return {
+    round: last?.round ?? path.length,
+    word,
+    label: path.length <= 1 ? MARKER_LABELS.first : MARKER_LABELS.melded,
+  };
+}
+
 function srOnly(text: string): HTMLSpanElement {
   const span = document.createElement("span");
   span.className = "sr-only";
@@ -441,9 +458,9 @@ function srOnly(text: string): HTMLSpanElement {
   return span;
 }
 
-// The rounds that led to the match, ending in a marker instead of repeating
-// the matched word, which the headline already shows.
-function renderPathList() {
+// The rounds that led to the match, ending in a marker row that repeats the
+// matched word so it stands out at the end of the path.
+function renderPathList(word: string) {
   pathList.innerHTML = "";
   const order = participantOrder(state.path, state.players);
   for (const round of state.path) {
@@ -463,15 +480,20 @@ function renderPathList() {
     li.append(num, words);
     pathList.appendChild(li);
   }
-  const last = state.path[state.path.length - 1];
-  if (last) {
+  if (state.path.length > 0) {
+    const m = matchedMarker(state.path, word);
     const li = document.createElement("li");
     li.className = "matched-row";
-    const marker = document.createElement("span");
-    marker.className = "path-marker";
-    marker.textContent =
-      state.path.length === 1 ? "First try" : `Melded in round ${last.round}`;
-    li.appendChild(marker);
+    const num = document.createElement("span");
+    num.className = "path-round";
+    num.append(srOnly("Round "), String(m.round));
+    const wordEl = document.createElement("span");
+    wordEl.className = "path-marker-word";
+    wordEl.textContent = m.word;
+    const label = document.createElement("span");
+    label.className = "path-marker";
+    label.textContent = m.label;
+    li.append(num, wordEl, label);
     pathList.appendChild(li);
   }
 }
@@ -956,7 +978,7 @@ function clearResultCard() {
 
 function prepareResultCard() {
   clearResultCard();
-  const word = state.revealResults[0]?.word ?? "";
+  const word = matchedWordOf();
   const path = state.path;
   const order = participantOrder(path, state.players);
   // Wait for the web fonts, or the canvas falls back to system fonts.
@@ -1027,8 +1049,7 @@ function ellipsize(
   return `${cut.trimEnd()}…`;
 }
 
-// "Melded in round 7" -> "M E L D E D   I N   R O U N D   7", like the
-// manual's spaced labels.
+// "Melded" -> "M E L D E D", like the manual's spaced labels.
 function letterSpace(text: string): string {
   return text
     .toUpperCase()
@@ -1197,10 +1218,10 @@ function renderResultCard(
     });
   }
 
-  const last = path[path.length - 1];
+  const marker = matchedMarker(path, word);
   // The final row of the path: laid out like the rounds above it (number
   // column, then the word), so the path reads 1, 2, ... N through the match.
-  const drawMarker = (y: number, label: string) => {
+  const drawMarker = (y: number) => {
     ctx.fillStyle = cream;
     ctx.fillRect(pad, y, contentWidth, MARKER_HEIGHT);
     ctx.fillStyle = gold;
@@ -1210,12 +1231,12 @@ function renderResultCard(
     ctx.textAlign = "left";
     ctx.fillStyle = muted;
     setFont(ctx, 21, MONO, 400);
-    ctx.fillText(String(last?.round ?? path.length), pad + 32, mid);
+    ctx.fillText(String(marker.round), pad + 32, mid);
 
     ctx.textAlign = "right";
     ctx.fillStyle = rust;
     setFont(ctx, 22, MONO, 500);
-    const labelText = letterSpace(label);
+    const labelText = letterSpace(marker.label);
     ctx.fillText(labelText, pad + contentWidth - 28, mid);
     const labelWidth = ctx.measureText(labelText).width;
 
@@ -1223,15 +1244,15 @@ function renderResultCard(
     const room = contentWidth - 100 - 28 - labelWidth - 24;
     ctx.textAlign = "left";
     ctx.fillStyle = rust;
-    fitFont(ctx, word, room, 34, 22, SANS, 700);
-    ctx.fillText(ellipsize(ctx, word, room), textX, mid);
+    fitFont(ctx, marker.word, room, 34, 22, SANS, 700);
+    ctx.fillText(ellipsize(ctx, marker.word, room), textX, mid);
     ctx.textBaseline = "alphabetic";
   };
 
   const bottom = CARD_HEIGHT - 135;
   if (path.length <= 1) {
     // Matched on the first round: no path to show.
-    drawMarker((band + bottom - MARKER_HEIGHT) / 2, "First try");
+    drawMarker((band + bottom - MARKER_HEIGHT) / 2);
   } else {
     ctx.fillStyle = rust;
     setFont(ctx, 26, MONO, 500);
@@ -1279,7 +1300,7 @@ function renderResultCard(
       }
       y += rowHeight(row, size) + ROW_GAP;
     }
-    drawMarker(y, "Melded");
+    drawMarker(y);
   }
 
   ctx.textAlign = "center";
